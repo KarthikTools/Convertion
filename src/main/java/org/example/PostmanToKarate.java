@@ -37,7 +37,7 @@ public class PostmanToKarate {
                 "Background:\n" +
                 "  * url '" + url + "'\n\n" +
                 "Scenario: " + name + "\n" +
-                "  Given method " + method + "\n" +
+                "  Given url " + url + "\n" +
                 "  When path '/'\n" +
                 "  Then status 200\n\n";
 
