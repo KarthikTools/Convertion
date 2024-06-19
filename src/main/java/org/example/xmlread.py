@@ -58,36 +58,49 @@ def create_pain001_xml_with_validations(payment_blocks, downstream_system_values
     grp_hdr.find('NbOfTxs', namespaces=ns).text = str(len(payment_blocks))
     grp_hdr.find('CtrlSum', namespaces=ns).text = str(update_control_sum([txn for blk in payment_blocks for txn in blk['transactions']]))
 
-    # Find the PmtInf element
-    pmt_inf = root.find('.//PmtInf', namespaces=ns)
-    pmt_inf.find('PmtInfId', namespaces=ns).text = generate_unique_id()
+    # Clear existing PmtInf elements
+    pmt_inf_parent = root.find('.//CstmrCdtTrfInitn', namespaces=ns)
+    for pmt_inf in root.findall('.//PmtInf', namespaces=ns):
+        pmt_inf_parent.remove(pmt_inf)
 
     for block in payment_blocks:
+        pymnt_inf = etree.SubElement(pmt_inf_parent, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}PmtInf")
+        pymnt_inf_id = etree.SubElement(pymnt_inf, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}PmtInfId")
+        pymnt_inf_id.text = generate_unique_id()
+        pmt_mtd = etree.SubElement(pymnt_inf, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}PmtMtd")
+        pmt_mtd.text = "TRF"
+        btch_bookg = etree.SubElement(pymnt_inf, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}BtchBookg")
+        btch_bookg.text = "false"
+        nb_of_txs = etree.SubElement(pymnt_inf, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}NbOfTxs")
+        nb_of_txs.text = str(len(block['transactions']))
+        ctrl_sum = etree.SubElement(pymnt_inf, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}CtrlSum")
+        ctrl_sum.text = str(update_control_sum(block['transactions']))
+
         for transaction in block['transactions']:
-            cdt_trf_tx_inf = ET.SubElement(pmt_inf, "CdtTrfTxInf")
-            pmt_id = ET.SubElement(cdt_trf_tx_inf, "PmtId")
-            end_to_end_id = ET.SubElement(pmt_id, "EndToEndId")
+            cdt_trf_tx_inf = etree.SubElement(pymnt_inf, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}CdtTrfTxInf")
+            pmt_id = etree.SubElement(cdt_trf_tx_inf, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}PmtId")
+            end_to_end_id = etree.SubElement(pmt_id, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}EndToEndId")
             end_to_end_id.text = generate_unique_id()
-            inst_id = ET.SubElement(pmt_id, "InstrId")
+            inst_id = etree.SubElement(pmt_id, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}InstrId")
             inst_id.text = generate_unique_id()
 
             # Check Payment Block Type
             if transaction["payment_block_type"] == "fixed debit":
                 # Add EqvAmt and XchgRate tags
-                eqv_amt = ET.SubElement(cdt_trf_tx_inf, "EqvAmt")
-                instd_amt = ET.SubElement(eqv_amt, "InstdAmt", Ccy="USD")
+                eqv_amt = etree.SubElement(cdt_trf_tx_inf, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}EqvAmt")
+                instd_amt = etree.SubElement(eqv_amt, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}InstdAmt", Ccy="USD")
                 instd_amt.text = str(transaction['amount'])
-                xchg_rate = ET.SubElement(eqv_amt, "XchgRate")
+                xchg_rate = etree.SubElement(eqv_amt, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}XchgRate")
                 xchg_rate.text = "1.2"  # Example exchange rate, adjust as necessary
             else:
                 # Add InstdAmt tag
-                amt = ET.SubElement(cdt_trf_tx_inf, "Amt")
-                instd_amt = ET.SubElement(amt, "InstdAmt", Ccy="CAD")
+                amt = etree.SubElement(cdt_trf_tx_inf, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}Amt")
+                instd_amt = etree.SubElement(amt, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}InstdAmt", Ccy="CAD")
                 instd_amt.text = str(transaction['amount'])
 
             # Add remittance information
-            rmt_inf = ET.SubElement(cdt_trf_tx_inf, "RmtInf")
-            ustrd = ET.SubElement(rmt_inf, "Ustrd")
+            rmt_inf = etree.SubElement(cdt_trf_tx_inf, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}RmtInf")
+            ustrd = etree.SubElement(rmt_inf, "{urn:iso:std:iso:20022:tech:xsd:pain.001.001.03}Ustrd")
             ustrd.text = transaction.get("remittance_info", "")
 
             # Update transaction values based on downstream system validations
@@ -131,42 +144,4 @@ def main(sample_xml_path, excel_file_path, output_xml_path):
     sanction_values = extract_values_and_xpath(sanction_df)
     sps_reversal_values = extract_values_and_xpath(sps_reversal_df)
 
-    # Combine all values and XPath into a single dictionary
-    downstream_system_values = {
-        "Enrolment": enrolment_values,
-        "CAV": cav_values,
-        "SPS": sps_values,
-        "FRAUD": fraud_values,
-        "SANCTION": sanction_values,
-        "SPS_REVERSAL": sps_reversal_values
-    }
-
-    # Group transactions by payment block
-    payment_blocks_with_remittance = {}
-    for txn in transactions_with_validations:
-        block_id = txn["payment_block"]
-        if block_id not in payment_blocks_with_remittance:
-            payment_blocks_with_remittance[block_id] = {"transactions": []}
-        payment_blocks_with_remittance[block_id]["transactions"].append(txn)
-
-    # Convert the payment blocks dictionary to a list
-    payment_blocks_list_with_validations = [block for block in payment_blocks_with_remittance.values()]
-
-    # Generate the Pain001 XML using the extracted data with validations
-    pain001_tree_with_validations = create_pain001_xml_with_validations(payment_blocks_list_with_validations, downstream_system_values, sample_xml_content)
-    xml_str_with_validations = ET.tostring(pain001_tree_with_validations.getroot(), encoding='utf-8').decode('utf-8')
-
-    # Save the updated XML to the specified output path
-    with open(output_xml_path, 'w') as output_file:
-        output_file.write(xml_str_with_validations)
-
-    print(f"Generated XML saved to {output_xml_path}")
-
-# Define file paths
-sample_xml_path = 'C:\\path\\to\\your\\sample.xml'
-excel_file_path = 'C:\\path\\to\\your\\excel\\file.xlsx'
-output_xml_path = 'C:\\path\\to\\your\\output\\pain001.xml'
-
-# Run the main function
-if __name__ == "__main__":
-    main(sample_xml_path, excel_file_path, output_xml_path)
+    # Combine all values and
