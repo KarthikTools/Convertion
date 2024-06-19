@@ -56,7 +56,7 @@ def create_pain001_xml_with_validations(payment_blocks, downstream_system_values
     grp_hdr.find('NbOfTxs', namespaces=ns).text = str(sum(len(block['transactions']) for block in payment_blocks))
     grp_hdr.find('CtrlSum', namespaces=ns).text = str(update_control_sum([txn for blk in payment_blocks for txn in blk['transactions']]))
 
-    # Clear existing PmtInf elements
+    # Locate the CstmrCdtTrfInitn element
     pmt_inf_parent = root.find('.//CstmrCdtTrfInitn', namespaces=ns)
 
     for block in payment_blocks:
@@ -140,7 +140,7 @@ def create_pain001_xml_with_validations(payment_blocks, downstream_system_values
                 if validation in downstream_system_values[system]:
                     stub_value = downstream_system_values[system][validation]["StubValue"]
                     xpath = downstream_system_values[system][validation]["XPath"]
-                    element = root.xpath(xpath, namespaces=ns)
+                    element = cdt_trf_tx_inf.xpath(xpath, namespaces=ns)
                     if element:
                         element[0].text = stub_value
 
