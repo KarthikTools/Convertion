@@ -56,10 +56,8 @@ def create_pain001_xml_with_validations(payment_blocks, downstream_system_values
     grp_hdr.find('NbOfTxs', namespaces=ns).text = str(sum(len(block['transactions']) for block in payment_blocks))
     grp_hdr.find('CtrlSum', namespaces=ns).text = str(update_control_sum([txn for blk in payment_blocks for txn in blk['transactions']]))
 
-    # Remove existing PmtInf elements if needed
+    # Clear existing PmtInf elements
     pmt_inf_parent = root.find('.//CstmrCdtTrfInitn', namespaces=ns)
-    for pmt_inf in root.findall('.//PmtInf', namespaces=ns):
-        pmt_inf_parent.remove(pmt_inf)
 
     for block in payment_blocks:
         pymnt_inf = ET.SubElement(pmt_inf_parent, "PmtInf")
@@ -146,8 +144,7 @@ def create_pain001_xml_with_validations(payment_blocks, downstream_system_values
                     if element:
                         element[0].text = stub_value
 
-    tree = ET.ElementTree(ET.fromstring(ET.tostring(root)))
-    return tree
+    return ET.ElementTree(root)
 
 def main(sample_xml_path, excel_file_path, output_xml_path):
     # Load the sample XML
