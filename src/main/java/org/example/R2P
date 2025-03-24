@@ -1,0 +1,139 @@
+import xml.etree.ElementTree as ET
+import json
+import uuid
+import re
+
+def parse_readyapi_xml(xml_file):
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
+    ns = {'con': 'http://eviware.com/soapui/config'}
+
+    collection = {
+        "info": {
+            "name": root.attrib.get('name', 'ReadyAPI Project Converted'),
+            "_postman_id": str(uuid.uuid4()),
+            "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+        },
+        "item": [],
+        "variable": []
+    }
+
+    # Extract global properties/environment
+    properties = root.find('.//con:properties', ns)
+    if properties:
+        for prop in properties.findall('con:property', ns):
+            collection["variable"].append({
+                "key": prop.findtext('con:name', '', ns),
+                "value": prop.findtext('con:value', '', ns)
+            })
+
+    # Process Test Suites
+    for suite in root.findall('.//con:testSuite', ns):
+        suite_folder = {"name": suite.attrib.get('name'), "item": []}
+
+        # Process Test Cases
+        for case in suite.findall('.//con:testCase', ns):
+            case_folder = {"name": case.attrib.get('name'), "item": []}
+
+            # Process Test Steps
+            for step in case.findall('.//con:testStep', ns):
+                step_type = step.attrib.get('type', '')
+                step_name = step.attrib.get('name', '')
+
+                if step_type == 'restrequest':
+                    config = step.find('.//con:config', ns)
+                    method = config.attrib.get('method', 'GET')
+                    endpoint = config.findtext('.//con:endpoint', '{{baseUrl}}', ns)
+                    resourcePath = config.findtext('.//con:resourcePath', '', ns)
+
+                    headers = []
+                    body = None
+                    request_body = config.find('.//con:request', ns)
+                    if request_body is not None and request_body.text:
+                        body = {
+                            "mode": "raw",
+                            "raw": request_body.text,
+                            "options": {"raw": {"language": "json"}}
+                        }
+                        headers.append({"key": "Content-Type", "value": "application/json"})
+
+                    request = {
+                        "name": step_name,
+                        "request": {
+                            "method": method,
+                            "header": headers,
+                            "body": body,
+                            "url": endpoint + resourcePath
+                        },
+                        "event": []
+                    }
+
+                    # Assertions to Tests
+                    assertions = step.find('.//con:assertions', ns)
+                    test_script = ""
+                    if assertions:
+                        for assertion in assertions.findall('con:assertion', ns):
+                            assertion_type = assertion.attrib.get('type')
+                            if assertion_type == "Valid HTTP Status Codes":
+                                codes = assertion.findtext(".//con:entry[@key='validStatusCodes']", '', ns)
+                                test_script += f'pm.test("Status code is valid", () => {{ pm.response.to.have.status([{codes}]); }});\n'
+
+                    if test_script:
+                        request["event"].append({
+                            "listen": "test",
+                            "script": {"type": "text/javascript", "exec": test_script.splitlines()}
+                        })
+
+                    case_folder["item"].append(request)
+
+                elif step_type == 'groovy':
+                    script_text = step.findtext('.//con:script', '', ns)
+                    js_script = "// Groovy Script converted (manual check required)\n" + script_text.replace('context.', 'pm.variables.')
+                    case_folder["item"].append({
+                        "name": step_name,
+                        "event": [{
+                            "listen": "prerequest",
+                            "script": {"type": "text/javascript", "exec": js_script.splitlines()}
+                        }],
+                        "request": {"method": "GET", "url": "{{baseUrl}}/groovy-placeholder"}
+                    })
+
+                elif step_type == 'transfer':
+                    transfers = step.findall('.//con:transfer', ns)
+                    script_exec = []
+                    for transfer in transfers:
+                        source = transfer.find('.//con:source', ns)
+                        target = transfer.find('.//con:target', ns)
+                        source_prop = source.attrib.get('property', '')
+                        target_prop = target.attrib.get('property', '')
+                        script_exec.append(f'pm.environment.set("{target_prop}", pm.environment.get("{source_prop}"));')
+
+                    case_folder["item"].append({
+                        "name": step_name,
+                        "event": [{"listen": "prerequest", "script": {"type": "text/javascript", "exec": script_exec}}],
+                        "request": {"method": "GET", "url": "{{baseUrl}}/transfer-placeholder"}
+                    })
+
+                elif step_type == 'datasource':
+                    datasource_props = step.findall('.//con:property', ns)
+                    for prop in datasource_props:
+                        collection["variable"].append({
+                            "key": prop.text.strip(),
+                            "value": ""
+                        })
+
+            suite_folder["item"].append(case_folder)
+        collection["item"].append(suite_folder)
+
+    return collection
+
+def write_postman_collection(collection, filename):
+    with open(filename, 'w') as f:
+        json.dump(collection, f, indent=2)
+    print(f"Postman Collection saved to: {filename}")
+
+if __name__ == "__main__":
+    readyapi_xml = "readyapi_project.xml"
+    postman_json = "postman_collection.json"
+    collection = parse_readyapi_xml(readyapi_xml)
+    write_postman_collection(collection, postman_json)
