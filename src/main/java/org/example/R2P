@@ -1,152 +1,126 @@
 import xml.etree.ElementTree as ET
 import json
-import uuid
-import re
 
 ns = {'con': 'http://eviware.com/soapui/config'}
 
-def convert_groovy_to_js(groovy_script):
-    js_script = groovy_script.replace('def ', 'let ') \
-        .replace('log.info', 'console.log') \
-        .replace('testRunner.testCase.testSteps["', 'pm.variables.get("') \
-        .replace('"].getPropertyValue("Response")', '")') \
-        .replace('new JsonSlurper().parseText', 'JSON.parse') \
-        .replace('.toInteger()', 'parseInt()') \
-        .replace('assert ', 'pm.expect(').replace('==', ').to.eql(') + ');'
-    return "// Converted from Groovy\n" + js_script
-
-def parse_request_body(request_text):
-    try:
-        return json.loads(request_text)
-    except:
-        return request_text.strip()
-
-def parse_test_case(test_case):
-    case_name = test_case.attrib.get('name')
-    properties = {}
-    props = test_case.find('con:properties', ns)
-    if props:
-        for prop in props.findall('con:property', ns):
-            key = prop.find('con:name', ns).text
-            value = prop.find('con:value', ns).text
-            properties[key] = value
-
-    steps = test_case.findall('con:testStep', ns)
-    items = []
-
-    for step in steps:
-        step_type = step.attrib.get('type')
-        step_name = step.attrib.get('name')
-
-        if step_type == 'restrequest':
-            config = step.find('con:config', ns)
-            method = config.attrib.get('method', 'GET')
-            endpoint = config.findtext('con:originalUri', default='{{baseUrl}}', namespaces=ns)
-            request_body_text = config.findtext('con:request', default='', namespaces=ns)
-            request_body = parse_request_body(request_body_text)
-            
-            headers = []
-            settings = config.find('con:settings', ns)
-            if settings:
-                for entry in settings.findall('con:setting/con:entry', ns):
-                    key = entry.attrib.get('key')
-                    value = entry.attrib.get('value')
-                    headers.append({'key': key, 'value': value})
-
-            # Assertions
-            test_scripts = []
-            assertions = config.findall('con:assertion', ns)
-            for assertion in assertions:
-                assertion_type = assertion.attrib.get('type')
-                if assertion_type == "Valid HTTP Status Codes":
-                    codes = assertion.findtext('.//codes', namespaces=ns)
-                    test_scripts.append(f'pm.test("Status code is {codes}", () => pm.response.to.have.status({codes}));')
-                elif assertion_type == "Response SLA Assertion":
-                    sla = assertion.findtext('.//SLA', namespaces=ns)
-                    test_scripts.append(f'pm.test("Response time below {sla}ms", () => pm.expect(pm.response.responseTime).below({sla}));')
-                elif assertion_type.startswith('JSONPath'):
-                    path = assertion.findtext('.//path', namespaces=ns).replace('$', '')
-                    test_scripts.append(f'pm.test("JSONPath {path} exists", () => pm.expect(_.get(pm.response.json(), "{path}")).to.exist);')
-
-            item = {
-                "name": step_name,
-                "request": {
-                    "method": method,
-                    "header": headers,
-                    "url": endpoint,
-                    "body": {
-                        "mode": "raw",
-                        "raw": json.dumps(request_body, indent=2)
-                    } if request_body else None
-                },
-                "event": [{
-                    "listen": "test",
-                    "script": {"type": "text/javascript", "exec": test_scripts}
-                }] if test_scripts else []
-            }
-            items.append(item)
-
-        elif step_type == 'transfer':
-            transfers = step.findall('.//con:transfer', ns)
-            scripts = []
-            for transfer in transfers:
-                source = transfer.find('con:source', ns)
-                target = transfer.find('con:target', ns)
-                source_path = source.attrib.get('sourcePath', '').replace('$', '')
-                target_prop = target.attrib.get('property')
-                scripts.append(f'pm.variables.set("{target_prop}", _.get(pm.response.json(), "{source_path}"));')
-            items[-1]['event'].append({
-                "listen": "test",
-                "script": {"type": "text/javascript", "exec": scripts}
-            })
-
-        elif step_type == 'groovy':
-            groovy_script = step.findtext('.//con:script', namespaces=ns)
-            js_script = convert_groovy_to_js(groovy_script)
-            items[-1]['event'].append({
-                "listen": "test",
-                "script": {"type": "text/javascript", "exec": js_script.splitlines()}
-            })
-
-    return {"name": case_name, "item": items}
-
-def generate_collection(xml_path):
-    tree = ET.parse(xml_path)
+def convert_readyapi_to_postman(readyapi_file, postman_file):
+    tree = ET.parse(readyapi_file)
     root = tree.getroot()
 
-    collection = {
+    postman_collection = {
         "info": {
-            "name": "ReadyAPI to Postman",
-            "_postman_id": str(uuid.uuid4()),
+            "name": "Daimler_Smoke",
+            "description": "Converted from ReadyAPI project",
             "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
         },
         "item": [],
-        "variable": [{"key": "baseUrl", "value": "{{baseUrl}}"}]
+        "event": [],
+        "variable": []
     }
 
-    suites = root.findall('.//con:testSuite', ns)
-    for suite in suites:
-        suite_item = {"name": suite.attrib.get('name'), "item": []}
+    def extract_assertions(rest_request):
+        tests = []
+        assertions = rest_request.findall('.//con:assertion', ns)
+        for assertion in assertions:
+            a_type = assertion.get('type')
+            name = assertion.get('name')
+            if a_type == "Valid HTTP Status Codes":
+                tests.append(f'pm.test("{name}", function () {{ pm.response.to.have.status(200); }});')
+            elif a_type == "JSONPath Match":
+                path = assertion.findtext('.//con:configuration/con:path', namespaces=ns)
+                if path:
+                    tests.append(f'pm.test("Check JSONPath {path}", function () {{ var jsonData = pm.response.json(); pm.expect(jsonData{path}).to.exist; }});')
+        return tests
 
-        # Adding getAccessToken and OAuth before each test case
-        common_steps = [{"name": "getAccessToken"}, {"name": "OAuth"}]
+    def extract_headers(config):
+        headers = []
+        for entry in config.findall('.//con:entry', ns):
+            key = entry.get('key')
+            value = entry.get('value')
+            if key and value:
+                headers.append({"key": key, "value": value})
+        return headers
 
-        test_cases = suite.findall('con:testCase', ns)
-        for case in test_cases:
-            case_data = parse_test_case(case)
-            # prepend common steps
-            case_data['item'] = common_steps + case_data['item']
-            suite_item['item'].append(case_data)
+    for test_suite in root.findall('con:testSuite', ns):
+        suite_name = test_suite.get('name')
+        for test_case in test_suite.findall('con:testCase', ns):
+            case_name = test_case.get('name')
+            folder = {
+                "name": case_name,
+                "item": []
+            }
 
-        collection['item'].append(suite_item)
+            for test_step in test_case.findall('con:testStep', ns):
+                step_type = test_step.get('type')
+                step_name = test_step.get('name')
 
-    return collection
+                if step_type == "restrequest":
+                    config = test_step.find('con:config', ns)
+                    rest_request = config.find('con:restRequest', ns)
+                    original_uri = rest_request.findtext('con:originalUri', default="", namespaces=ns)
+                    request_body = rest_request.findtext('con:request', default="", namespaces=ns)
+                    headers = extract_headers(config)
 
-if __name__ == "__main__":
-    readyapi_xml = 'readyapi_project.xml'
-    postman_json = 'postman_collection.json'
-    collection = generate_collection(readyapi_xml)
-    with open(postman_json, 'w') as f:
-        json.dump(collection, f, indent=2)
+                    # Parameters (e.g. requestId, channelType)
+                    params = []
+                    parameters = rest_request.find('con:parameters', ns)
+                    if parameters:
+                        for param in parameters.findall('con:entry', ns):
+                            k = param.get('key')
+                            v = param.get('value')
+                            if k and v:
+                                params.append({"key": k, "value": v})
 
-    print(f'Postman collection created: {postman_json}')
+                    postman_request = {
+                        "name": step_name,
+                        "request": {
+                            "method": "POST",
+                            "header": headers,
+                            "url": {
+                                "raw": original_uri,
+                                "host": [original_uri],
+                                "query": params
+                            },
+                            "body": {
+                                "mode": "raw",
+                                "raw": request_body or "",
+                                "options": {
+                                    "raw": {"language": "json"}
+                                }
+                            }
+                        },
+                        "event": []
+                    }
+
+                    # Add assertions
+                    test_scripts = extract_assertions(rest_request)
+                    if test_scripts:
+                        postman_request["event"].append({
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": test_scripts
+                            }
+                        })
+
+                    folder["item"].append(postman_request)
+
+                elif step_type == "groovy":
+                    script = test_step.findtext('.//con:config/con:script', namespaces=ns)
+                    folder["item"].append({
+                        "name": step_name,
+                        "event": [{
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [f"// Converted from Groovy\n{script}"]
+                            }
+                        }]
+                    })
+
+            postman_collection["item"].append(folder)
+
+    with open(postman_file, 'w') as f:
+        json.dump(postman_collection, f, indent=2)
+
+    print(f"Postman collection saved to: {postman_file}")
