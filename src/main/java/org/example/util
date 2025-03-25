@@ -1,0 +1,181 @@
+import xml.etree.ElementTree as ET
+import json
+
+ns = {'con': 'http://eviware.com/soapui/config'}
+
+def extract_properties(properties_element):
+    props = {}
+    for prop in properties_element.findall('con:property', ns):
+        key = prop.find('con:name', ns).text
+        value = prop.find('con:value', ns).text
+        props[key] = value
+    return props
+
+def extract_assertions(assertions):
+    test_script = ""
+    for assertion in assertions.findall('con:assertion', ns):
+        assertion_type = assertion.get('type')
+        name = assertion.get('name')
+        config = assertion.find('con:configuration', ns)
+        if assertion_type == 'Valid HTTP Status Codes':
+            expected = config.find('con:codes', ns).text
+            test_script += f"pm.test('{name}', () => {{ pm.response.to.have.status({expected}); }});\n"
+        elif assertion_type == 'HTTP Header Equals':
+            header = config.find('con:Header', ns).text
+            value = config.find('con:Value', ns).text
+            test_script += f"pm.test('{name}', () => {{ pm.response.to.have.header('{header}', '{value}'); }});\n"
+        elif assertion_type == 'JsonPath Match':
+            path = config.find('con:path', ns).text
+            test_script += f"pm.test('{name}', () => {{ pm.expect(pm.response.json(){path}).to.exist; }});\n"
+    return test_script
+
+def extract_groovy_script(config):
+    script = config.find('con:script', ns)
+    return script.text if script is not None else ""
+
+def extract_parameters(param_element):
+    params = []
+    for entry in param_element.findall('con:entry', ns):
+        key = entry.get('key')
+        value = entry.get('value')
+        params.append({'key': key, 'value': value})
+    return params
+
+def extract_transfer_variables(config):
+    vars_set = []
+    for transfer in config.findall('con:transfers/con:transfer', ns):
+        target = transfer.find('con:targetStep', ns).text
+        target_var = transfer.find('con:targetPath', ns).text
+        source_path = transfer.find('con:sourcePath', ns).text
+        source = transfer.find('con:sourceStep', ns).text
+        vars_set.append((target, target_var, source, source_path))
+    return vars_set
+
+def create_postman_item(name, url, method="POST", headers=None, body=None, tests=None, params=None):
+    item = {
+        "name": name,
+        "request": {
+            "method": method,
+            "header": headers or [],
+            "url": {
+                "raw": url,
+                "host": [url],
+            },
+            "body": {
+                "mode": "raw",
+                "raw": body or ""
+            }
+        },
+        "event": [
+            {
+                "listen": "test",
+                "script": {
+                    "type": "text/javascript",
+                    "exec": tests.strip().split('\n') if tests else []
+                }
+            }
+        ]
+    }
+    if params:
+        item["request"]["url"]["query"] = params
+    return item
+
+def convert_readyapi_to_postman(readyapi_file, output_json_file):
+    tree = ET.parse(readyapi_file)
+    root = tree.getroot()
+
+    collection = {
+        "info": {
+            "name": "Converted ReadyAPI Project",
+            "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+        },
+        "item": [],
+        "variable": []
+    }
+
+    # Add getAccessToken and OAuth to a pre-request folder
+    token_folder = {
+        "name": "Pre-Auth",
+        "item": []
+    }
+
+    for test_suite in root.findall('con:testSuite', ns):
+        for test_case in test_suite.findall('con:testCase', ns):
+            folder = {
+                "name": test_case.get('name'),
+                "item": []
+            }
+
+            for test_step in test_case.findall('con:testStep', ns):
+                step_type = test_step.get('type')
+                name = test_step.get('name')
+
+                if step_type == 'restrequest':
+                    config = test_step.find('con:config', ns)
+                    endpoint = config.find('con:originalUri', ns).text
+                    request_body = config.find('con:request', ns).text if config.find('con:request', ns) is not None else ""
+                    params = config.find('con:parameters', ns)
+                    param_list = extract_parameters(params) if params is not None else []
+
+                    assertions = config.findall('.//con:assertion', ns)
+                    test_script = extract_assertions(config) if assertions else ""
+
+                    headers = config.find('con:settings', ns)
+                    header_list = []
+                    if headers is not None:
+                        for entry in headers.findall('con:setting', ns):
+                            key = entry.get('key')
+                            value = entry.get('value') or entry.text
+                            header_list.append({"key": key, "value": value})
+
+                    item = create_postman_item(name, endpoint, headers=header_list, body=request_body, tests=test_script, params=param_list)
+                    folder["item"].append(item)
+
+                elif step_type == 'groovy':
+                    config = test_step.find('con:config', ns)
+                    script_text = extract_groovy_script(config)
+                    folder["item"].append({
+                        "name": name + "_validation",
+                        "event": [
+                            {
+                                "listen": "test",
+                                "script": {
+                                    "type": "text/javascript",
+                                    "exec": script_text.strip().split('\n')
+                                }
+                            }
+                        ]
+                    })
+
+                elif step_type == 'transfer':
+                    config = test_step.find('con:config', ns)
+                    for target, target_var, source, path in extract_transfer_variables(config):
+                        folder["item"].append({
+                            "name": f"Transfer {source} to {target}",
+                            "event": [{
+                                "listen": "prerequest",
+                                "script": {
+                                    "type": "text/javascript",
+                                    "exec": [
+                                        f"pm.variables.set('{target_var}', pm.response.json(){path});"
+                                    ]
+                                }
+                            }]
+                        })
+
+            collection["item"].append(folder)
+
+    # Add access token steps once before all
+    token_folder["item"].append(create_postman_item("getAccessToken", "https://ssoa.saifg.rbc.com:9443/as/token.oauth2"))
+    token_folder["item"].append(create_postman_item("OAuth", "https://ssoa.saifg.rbc.com:9443/as/token.oauth2"))
+    collection["item"].insert(0, token_folder)
+
+    with open(output_json_file, 'w') as f:
+        json.dump(collection, f, indent=2)
+
+# Example usage
+if __name__ == "__main__":
+    convert_readyapi_to_postman(
+        readyapi_file="",
+        output_json_file=""
+    )
