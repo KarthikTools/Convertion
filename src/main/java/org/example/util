@@ -3,10 +3,6 @@ import json
 
 ns = {'con': 'http://eviware.com/soapui/config'}
 
-def extract_text(elem, tag):
-    child = elem.find(tag, ns)
-    return child.text if child is not None else ""
-
 def convert_readyapi_to_postman(readyapi_file, postman_file):
     tree = ET.parse(readyapi_file)
     root = tree.getroot()
@@ -18,101 +14,135 @@ def convert_readyapi_to_postman(readyapi_file, postman_file):
             "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
         },
         "item": [],
+        "event": [],
         "variable": []
     }
 
-    # Prepare pre-request folder items for getAccessToken and Oauth
-    pre_request_items = []
-    
-    def create_rest_item(step_name, method, url, headers, body, tests=None, pre_request=None):
-        item = {
-            "name": step_name,
-            "request": {
-                "method": method.upper(),
-                "header": headers,
-                "body": body,
-                "url": {
-                    "raw": url,
-                    "host": [url.split('/')[2]],
-                    "path": url.split('/')[3:]
-                }
-            },
-            "event": []
-        }
-        if pre_request:
-            item["event"].append({
-                "listen": "prerequest",
-                "script": {
-                    "type": "text/javascript",
-                    "exec": pre_request.strip().split("\n")
-                }
-            })
-        if tests:
-            item["event"].append({
-                "listen": "test",
-                "script": {
-                    "type": "text/javascript",
-                    "exec": tests.strip().split("\n")
-                }
-            })
-        return item
+    def extract_assertions(rest_request):
+        tests = []
+        assertions = rest_request.findall('.//con:assertion', ns)
+        for assertion in assertions:
+            a_type = assertion.get('type')
+            name = assertion.get('name')
+            if a_type == "Valid HTTP Status Codes":
+                tests.append(f'pm.test("{name}", function () {{ pm.response.to.have.status(200); }});')
+            elif a_type == "JSONPath Match":
+                path = assertion.findtext('.//con:configuration/con:path', namespaces=ns)
+                if path:
+                    tests.append(f'pm.test("Check JSONPath {path}", function () {{ var jsonData = pm.response.json(); pm.expect(jsonData{path}).to.exist; }});')
+        return tests
+
+    def extract_headers(config):
+        headers = []
+        for entry in config.findall('.//con:entry', ns):
+            key = entry.get('key')
+            value = entry.get('value')
+            if key and value:
+                headers.append({"key": key, "value": value})
+        return headers
+
+    def extract_property_transfers(config):
+        pre_script = []
+        transfers = config.findall('con:transfers', ns)
+        for transfer in transfers:
+            name = transfer.findtext('con:name', namespaces=ns)
+            source_path = transfer.findtext('con:sourcePath', namespaces=ns)
+            if name and source_path:
+                pre_script.append(f"pm.variables.set('{name}', pm.response.json(){source_path});")
+        return pre_script
 
     for test_suite in root.findall('con:testSuite', ns):
         for test_case in test_suite.findall('con:testCase', ns):
-            test_case_name = test_case.get('name')
+            case_name = test_case.get('name')
             folder = {
-                "name": test_case_name,
+                "name": case_name,
                 "item": []
             }
 
+            prev_step_name = None
             for test_step in test_case.findall('con:testStep', ns):
                 step_type = test_step.get('type')
                 step_name = test_step.get('name')
-                
-                if step_type == 'restrequest':
+
+                if step_type == "restrequest":
                     config = test_step.find('con:config', ns)
                     rest_request = config.find('con:restRequest', ns)
-                    uri = extract_text(rest_request, 'con:originalUri')
-                    method = rest_request.get('method', 'GET')
-                    body = {
-                        "mode": "urlencoded",
-                        "urlencoded": []
+                    original_uri = rest_request.findtext('con:originalUri', default="", namespaces=ns)
+                    request_body = rest_request.findtext('con:request', default="", namespaces=ns)
+                    headers = extract_headers(config)
+
+                    params = []
+                    parameters = rest_request.find('con:parameters', ns)
+                    if parameters:
+                        for param in parameters.findall('con:entry', ns):
+                            k = param.get('key')
+                            v = param.get('value')
+                            if k and v:
+                                params.append({"key": k, "value": v})
+
+                    postman_request = {
+                        "name": step_name,
+                        "request": {
+                            "method": "POST",
+                            "header": headers,
+                            "url": {
+                                "raw": original_uri,
+                                "host": [original_uri],
+                                "query": params
+                            },
+                            "body": {
+                                "mode": "raw",
+                                "raw": request_body or "",
+                                "options": {
+                                    "raw": {"language": "json"}
+                                }
+                            }
+                        },
+                        "event": []
                     }
-                    for param in rest_request.findall('.//con:parameters/con:entry', ns):
-                        key = param.get('key')
-                        value = param.get('value')
-                        body['urlencoded'].append({"key": key, "value": value, "type": "text"})
-                    headers = []
-                    for h in rest_request.findall('con:headers/con:entry', ns):
-                        headers.append({"key": h.get('key'), "value": h.get('value')})
-                    folder["item"].append(create_rest_item(step_name, method, uri, headers, body))
 
-                elif step_type == 'transfer':
-                    config = test_step.find('con:config', ns)
-                    for transfer in config.findall('con:transfers', ns):
-                        name = extract_text(transfer, 'con:name')
-                        source_step = extract_text(transfer, 'con:sourceStep')
-                        source_path = extract_text(transfer, 'con:sourcePath')
-                        # postman script to extract variable from previous response
-                        script = f"pm.variables.set(\"{name}\", pm.response.json(){source_path});"
-                        folder["item"].append(create_rest_item(f"Transfer {name}", "GET", "http://mock/transfer", [], {}, pre_request=script))
+                    postman_request["event"].append({
+                        "listen": "test",
+                        "script": {
+                            "type": "text/javascript",
+                            "exec": extract_assertions(rest_request)
+                        }
+                    })
 
-                elif step_type == 'groovy':
+                    folder["item"].append(postman_request)
+                    prev_step_name = step_name
+
+                elif step_type == "transfer":
                     config = test_step.find('con:config', ns)
-                    groovy_script = extract_text(config, 'con:script')
-                    # Placeholder conversion logic to JS, can be extended
-                    js_script = groovy_script.replace('log.info', 'console.log') \
-                                               .replace('assert', 'pm.test("Assert", function () { pm.expect(...) })')
-                    folder["item"].append(create_rest_item(step_name, "GET", "http://mock/groovy", [], {}, tests=js_script))
+                    pre_script = extract_property_transfers(config)
+                    if prev_step_name:
+                        for item in folder["item"]:
+                            if item["name"] == prev_step_name:
+                                item["event"].append({
+                                    "listen": "prerequest",
+                                    "script": {
+                                        "type": "text/javascript",
+                                        "exec": pre_script
+                                    }
+                                })
+
+                elif step_type == "groovy":
+                    script = test_step.findtext('.//con:config/con:script', namespaces=ns)
+                    if prev_step_name:
+                        for item in folder["item"]:
+                            if item["name"] == prev_step_name:
+                                item["event"].append({
+                                    "listen": "test",
+                                    "script": {
+                                        "type": "text/javascript",
+                                        "exec": [f"// Converted from Groovy\n{script}"]
+                                    }
+                                })
 
             postman_collection["item"].append(folder)
 
     with open(postman_file, 'w') as f:
         json.dump(postman_collection, f, indent=2)
 
-if __name__ == "__main__":
-    convert_readyapi_to_postman(
-        readyapi_file='C://path//to//readyapi.xml',
-        postman_file='C://path//to//postman_collection.json'
-    )
+    print(f"Postman collection saved to: {postman_file}")
 
