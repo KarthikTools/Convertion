@@ -1,5 +1,6 @@
 import xml.etree.ElementTree as ET
 import json
+import re
 
 ns = {'con': 'http://eviware.com/soapui/config'}
 
@@ -35,6 +36,43 @@ def extract_property_transfers(config):
         if name and source_path:
             pre_script.append(f"pm.variables.set('{name}', pm.response.json(){source_path});")
     return pre_script
+
+def convert_groovy_to_postman_js(groovy_script: str) -> list:
+    js_lines = ["// Converted from Groovy script"]
+    for line in groovy_script.splitlines():
+        original = line
+        line = line.strip()
+        if not line:
+            js_lines.append("")
+            continue
+        if line.startswith("//"):
+            js_lines.append(line)
+            continue
+        line = re.sub(r"log\.info\((.+?)\)", r"console.log(\1);", line)
+        if "new JsonSlurper().parseText(" in line:
+            continue
+        match = re.search(r'def (\w+)\s*=\s*testRunner\.testCase\.testSteps\["(.+?)"\]\.getPropertyValue\("(.+?)"\)', line)
+        if match:
+            var_name, step, prop = match.groups()
+            js_lines.append(f"let {var_name} = pm.collectionVariables.get('{step}_{prop}');")
+            continue
+        match = re.search(r'def (\w+)\s*=\s*parse_json\.(.+)', line)
+        if match:
+            var_name, field = match.groups()
+            js_lines.append(f"let {var_name} = pm.response.json().{field};")
+            continue
+        line = re.sub(r'int (\w+)\s*=\s*(\w+)\.toInteger\(\)', r"let \1 = parseInt(\2);", line)
+        match = re.search(r'assert (.+?)\s*==\s*(.+)', line)
+        if match:
+            left, right = match.groups()
+            js_lines.append(f"pm.test('Assert {left.strip()} == {right.strip()}', function () {{")
+            js_lines.append(f"    pm.expect({left.strip()}).to.eql({right.strip()});")
+            js_lines.append("});")
+            continue
+        line = re.sub(r'\bdef\b', 'let', line)
+        js_lines.append(f"// Unhandled: {original.strip()}")
+        js_lines.append(line)
+    return js_lines
 
 def convert_readyapi_to_postman(readyapi_file, postman_file):
     tree = ET.parse(readyapi_file)
@@ -121,12 +159,13 @@ def convert_readyapi_to_postman(readyapi_file, postman_file):
 
                 elif step_type == "groovy":
                     script = test_step.findtext('.//con:config/con:script', namespaces=ns)
-                    if last_rest_step:
+                    js_script = convert_groovy_to_postman_js(script)
+                    if last_rest_step and js_script:
                         last_rest_step["event"].append({
                             "listen": "test",
                             "script": {
                                 "type": "text/javascript",
-                                "exec": [f"// Converted from Groovy\n{script}"]
+                                "exec": js_script
                             }
                         })
 
