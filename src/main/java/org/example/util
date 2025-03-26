@@ -3,6 +3,39 @@ import json
 
 ns = {'con': 'http://eviware.com/soapui/config'}
 
+def extract_assertions(rest_request):
+    tests = []
+    assertions = rest_request.findall('.//con:assertion', ns)
+    for assertion in assertions:
+        a_type = assertion.get('type')
+        name = assertion.get('name')
+        if a_type == "Valid HTTP Status Codes":
+            tests.append(f'pm.test("{name}", function () {{ pm.response.to.have.status(200); }});')
+        elif a_type == "JSONPath Match":
+            path = assertion.findtext('.//con:configuration/con:path', namespaces=ns)
+            if path:
+                tests.append(f'pm.test("Check JSONPath {path}", function () {{ var jsonData = pm.response.json(); pm.expect(jsonData{path}).to.exist; }});')
+    return tests
+
+def extract_headers(config):
+    headers = []
+    for entry in config.findall('.//con:entry', ns):
+        key = entry.get('key')
+        value = entry.get('value')
+        if key and value:
+            headers.append({"key": key, "value": value})
+    return headers
+
+def extract_property_transfers(config):
+    pre_script = []
+    transfers = config.findall('con:transfers', ns)
+    for transfer in transfers:
+        name = transfer.findtext('con:name', namespaces=ns)
+        source_path = transfer.findtext('con:sourcePath', namespaces=ns)
+        if name and source_path:
+            pre_script.append(f"pm.variables.set('{name}', pm.response.json(){source_path});")
+    return pre_script
+
 def convert_readyapi_to_postman(readyapi_file, postman_file):
     tree = ET.parse(readyapi_file)
     root = tree.getroot()
@@ -18,53 +51,25 @@ def convert_readyapi_to_postman(readyapi_file, postman_file):
         "variable": []
     }
 
-    def extract_assertions(rest_request):
-        tests = []
-        assertions = rest_request.findall('.//con:assertion', ns)
-        for assertion in assertions:
-            a_type = assertion.get('type')
-            name = assertion.get('name')
-            if a_type == "Valid HTTP Status Codes":
-                tests.append(f'pm.test("{name}", function () {{ pm.response.to.have.status(200); }});')
-            elif a_type == "JSONPath Match":
-                path = assertion.findtext('.//con:configuration/con:path', namespaces=ns)
-                if path:
-                    tests.append(f'pm.test("Check JSONPath {path}", function () {{ var jsonData = pm.response.json(); pm.expect(jsonData{path}).to.exist; }});')
-        return tests
-
-    def extract_headers(config):
-        headers = []
-        for entry in config.findall('.//con:entry', ns):
-            key = entry.get('key')
-            value = entry.get('value')
-            if key and value:
-                headers.append({"key": key, "value": value})
-        return headers
-
-    def extract_property_transfers(config):
-        pre_script = []
-        transfers = config.findall('con:transfers', ns)
-        for transfer in transfers:
-            name = transfer.findtext('con:name', namespaces=ns)
-            source_path = transfer.findtext('con:sourcePath', namespaces=ns)
-            if name and source_path:
-                pre_script.append(f"pm.variables.set('{name}', pm.response.json(){source_path});")
-        return pre_script
-
     for test_suite in root.findall('con:testSuite', ns):
         for test_case in test_suite.findall('con:testCase', ns):
-            case_name = test_case.get('name')
             folder = {
-                "name": case_name,
+                "name": test_case.get('name'),
                 "item": []
             }
 
-            prev_step_name = None
+            pending_pre_script = []
+            last_rest_step = None
+
             for test_step in test_case.findall('con:testStep', ns):
                 step_type = test_step.get('type')
                 step_name = test_step.get('name')
 
-                if step_type == "restrequest":
+                if step_type == "transfer":
+                    config = test_step.find('con:config', ns)
+                    pending_pre_script = extract_property_transfers(config)
+
+                elif step_type == "restrequest":
                     config = test_step.find('con:config', ns)
                     rest_request = config.find('con:restRequest', ns)
                     original_uri = rest_request.findtext('con:originalUri', default="", namespaces=ns)
@@ -101,43 +106,43 @@ def convert_readyapi_to_postman(readyapi_file, postman_file):
                         "event": []
                     }
 
-                    postman_request["event"].append({
-                        "listen": "test",
-                        "script": {
-                            "type": "text/javascript",
-                            "exec": extract_assertions(rest_request)
-                        }
-                    })
+                    if pending_pre_script:
+                        postman_request["event"].append({
+                            "listen": "prerequest",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": pending_pre_script
+                            }
+                        })
+                        pending_pre_script = []
 
                     folder["item"].append(postman_request)
-                    prev_step_name = step_name
-
-                elif step_type == "transfer":
-                    config = test_step.find('con:config', ns)
-                    pre_script = extract_property_transfers(config)
-                    if prev_step_name:
-                        for item in folder["item"]:
-                            if item["name"] == prev_step_name:
-                                item["event"].append({
-                                    "listen": "prerequest",
-                                    "script": {
-                                        "type": "text/javascript",
-                                        "exec": pre_script
-                                    }
-                                })
+                    last_rest_step = postman_request
 
                 elif step_type == "groovy":
                     script = test_step.findtext('.//con:config/con:script', namespaces=ns)
-                    if prev_step_name:
-                        for item in folder["item"]:
-                            if item["name"] == prev_step_name:
-                                item["event"].append({
-                                    "listen": "test",
-                                    "script": {
-                                        "type": "text/javascript",
-                                        "exec": [f"// Converted from Groovy\n{script}"]
-                                    }
-                                })
+                    if last_rest_step:
+                        last_rest_step["event"].append({
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [f"// Converted from Groovy\n{script}"]
+                            }
+                        })
+
+                elif step_type == "assertionteststep":
+                    assertions = test_step.findall('.//con:assertion', ns)
+                    assertion_scripts = []
+                    for assertion in assertions:
+                        assertion_scripts.extend(extract_assertions(assertion))
+                    if last_rest_step and assertion_scripts:
+                        last_rest_step["event"].append({
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": assertion_scripts
+                            }
+                        })
 
             postman_collection["item"].append(folder)
 
@@ -145,4 +150,3 @@ def convert_readyapi_to_postman(readyapi_file, postman_file):
         json.dump(postman_collection, f, indent=2)
 
     print(f"Postman collection saved to: {postman_file}")
-
