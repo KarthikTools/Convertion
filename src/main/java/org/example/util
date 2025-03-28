@@ -84,7 +84,30 @@ def convert_readyapi_to_postman(readyapi_file, output_dir, external_vars_file):
                 step_type = test_step.get('type')
                 step_name = test_step.get('name')
 
-                if step_type == "transfer":
+                if step_type == "datasource":
+                    properties = []
+                    config = test_step.find('con:config', ns)
+                    if config is not None:
+                        for prop in config.findall('con:property', ns):
+                            name = prop.get('name')
+                            value = prop.get('value') or ''
+                            properties.append(name)
+                            external_variables[name] = value
+                    
+                    script_lines = [f"// Simulating DataSource for {step_name}", "// The following variables should be fed from iterationData (CSV/JSON)"]
+                    script_lines += [f"let {p} = pm.iterationData.get('{p}');" for p in properties]
+                    folder["item"].append({
+                        "name": f"[DataSource: {step_name}]",
+                        "event": [{
+                            "listen": "prerequest",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": script_lines
+                            }
+                        }]
+                    })
+
+                elif step_type == "transfer":
                     config = test_step.find('con:config', ns)
                     pending_pre_script = extract_property_transfers(config)
 
@@ -97,7 +120,7 @@ def convert_readyapi_to_postman(readyapi_file, output_dir, external_vars_file):
 
                     resource_path = rest_request.get('resourcePath')
                     method_name = rest_request.get('methodName')
-                    http_method = "POST"  # default fallback
+                    http_method = "POST"
 
                     matched_query_params = []
                     matched_headers = []
@@ -169,5 +192,5 @@ def convert_readyapi_to_postman(readyapi_file, output_dir, external_vars_file):
     with open(external_vars_file, 'w') as f:
         json.dump({"variables": [{"key": k, "value": v} for k, v in external_variables.items()]}, f, indent=2)
 
-    print(f" Master Collection saved: {out_path}")
-    print(f" External environment variables saved to: {external_vars_file}")
+    print(f"✅ Master Collection saved: {out_path}")
+    print(f"🌐 External environment variables saved to: {external_vars_file}")
