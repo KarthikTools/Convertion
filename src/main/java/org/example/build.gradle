@@ -1,0 +1,46 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group 'com.readyapi'
+version '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+configurations {
+    all*.exclude group: 'org.slf4j', module: 'slf4j-log4j12'
+}
+
+dependencies {
+    // OpenAPI (Swagger) Core
+    implementation 'io.swagger.core.v3:swagger-core:2.2.19'
+    implementation 'io.swagger.core.v3:swagger-models:2.2.19'
+    implementation 'io.swagger.core.v3:swagger-annotations:2.2.19'
+    implementation 'io.swagger.parser.v3:swagger-parser:2.1.19'
+    
+    // JSON Processing
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.15.2'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.15.2'
+    
+    // XML Processing
+    implementation 'org.xmlunit:xmlunit-core:2.10.0'
+    
+    // Testing
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.9.2'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+application {
+    mainClass = 'com.readyapi.converter.Main'
+}
+
+test {
+    useJUnitPlatform()
+} 
