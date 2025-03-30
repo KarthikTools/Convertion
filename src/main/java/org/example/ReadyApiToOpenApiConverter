@@ -27,6 +27,7 @@ import java.util.regex.Pattern;
 
 public class ReadyApiToOpenApiConverter {
     private static final String NAMESPACE_URI = "http://eviware.com/soapui/config";
+    private static final String NAMESPACE_PREFIX = "con";
     private final Set<String> dataSourceVariables = new HashSet<>();
     private final Map<String, List<GroovyScript>> scriptRegistry = new HashMap<>();
     private final Map<String, String> functionLibrary = new HashMap<>();
@@ -92,14 +93,14 @@ public class ReadyApiToOpenApiConverter {
 
         // Convert paths from interfaces first
         Paths paths = new Paths();
-        NodeList interfaces = readyApiDoc.getElementsByTagNameNS(NAMESPACE_URI, "interface");
+        NodeList interfaces = getElementsByTagNameNSWithPrefix(readyApiDoc, "interface");
         for (int i = 0; i < interfaces.getLength(); i++) {
             Element iface = (Element) interfaces.item(i);
             processInterface(iface, paths);
         }
 
         // Then process paths from test suites
-        NodeList testSuites = readyApiDoc.getElementsByTagNameNS(NAMESPACE_URI, "testSuite");
+        NodeList testSuites = getElementsByTagNameNSWithPrefix(readyApiDoc, "testSuite");
         for (int i = 0; i < testSuites.getLength(); i++) {
             Element testSuite = (Element) testSuites.item(i);
             String suiteName = testSuite.getAttribute("name");
@@ -107,7 +108,7 @@ public class ReadyApiToOpenApiConverter {
             // Process suite-level setup/teardown
             processSuiteScripts(testSuite);
             
-            NodeList testCases = testSuite.getElementsByTagNameNS(NAMESPACE_URI, "testCase");
+            NodeList testCases = getElementsByTagNameNSWithPrefix(testSuite, "testCase");
             for (int j = 0; j < testCases.getLength(); j++) {
                 Element testCase = (Element) testCases.item(j);
                 String caseName = testCase.getAttribute("name");
@@ -140,11 +141,11 @@ public class ReadyApiToOpenApiConverter {
 
     private void collectResources(Document doc) {
         // Collect function library
-        NodeList functionLibraryNodes = doc.getElementsByTagNameNS(NAMESPACE_URI, "functionLibrary");
+        NodeList functionLibraryNodes = getElementsByTagNameNSWithPrefix(doc, "functionLibrary");
         for (int i = 0; i < functionLibraryNodes.getLength(); i++) {
             Element library = (Element) functionLibraryNodes.item(i);
             String libraryName = library.getAttribute("name");
-            NodeList functions = library.getElementsByTagNameNS(NAMESPACE_URI, "function");
+            NodeList functions = getElementsByTagNameNSWithPrefix(library, "function");
             for (int j = 0; j < functions.getLength(); j++) {
                 Element function = (Element) functions.item(j);
                 String functionName = function.getAttribute("name");
@@ -158,7 +159,7 @@ public class ReadyApiToOpenApiConverter {
         }
         
         // Collect properties
-        NodeList propertyNodes = doc.getElementsByTagNameNS(NAMESPACE_URI, "property");
+        NodeList propertyNodes = getElementsByTagNameNSWithPrefix(doc, "property");
         for (int i = 0; i < propertyNodes.getLength(); i++) {
             Element property = (Element) propertyNodes.item(i);
             String propertyName = property.getAttribute("name");
@@ -168,8 +169,8 @@ public class ReadyApiToOpenApiConverter {
     }
 
     private void processSuiteScripts(Element testSuite) {
-        NodeList setupScripts = testSuite.getElementsByTagNameNS(NAMESPACE_URI, "setupScript");
-        NodeList teardownScripts = testSuite.getElementsByTagNameNS(NAMESPACE_URI, "teardownScript");
+        NodeList setupScripts = getElementsByTagNameNSWithPrefix(testSuite, "setupScript");
+        NodeList teardownScripts = getElementsByTagNameNSWithPrefix(testSuite, "teardownScript");
         
         if (setupScripts.getLength() > 0) {
             String scriptContent = setupScripts.item(0).getTextContent();
@@ -185,8 +186,8 @@ public class ReadyApiToOpenApiConverter {
     }
 
     private void processCaseScripts(Element testCase) {
-        NodeList setupScripts = testCase.getElementsByTagNameNS(NAMESPACE_URI, "setupScript");
-        NodeList teardownScripts = testCase.getElementsByTagNameNS(NAMESPACE_URI, "teardownScript");
+        NodeList setupScripts = getElementsByTagNameNSWithPrefix(testCase, "setupScript");
+        NodeList teardownScripts = getElementsByTagNameNSWithPrefix(testCase, "teardownScript");
         
         if (setupScripts.getLength() > 0) {
             String scriptContent = setupScripts.item(0).getTextContent();
@@ -202,7 +203,7 @@ public class ReadyApiToOpenApiConverter {
     }
 
     private void processTestCase(Element testCase, Paths paths, String suiteName, String caseName) {
-        NodeList testSteps = testCase.getElementsByTagNameNS(NAMESPACE_URI, "testStep");
+        NodeList testSteps = getElementsByTagNameNSWithPrefix(testCase, "testStep");
         List<GroovyScript> pendingScripts = new ArrayList<>();
         
         for (int i = 0; i < testSteps.getLength(); i++) {
@@ -241,10 +242,10 @@ public class ReadyApiToOpenApiConverter {
     }
 
     private void processDataSource(Element dataSourceStep) {
-        NodeList properties = dataSourceStep.getElementsByTagNameNS(NAMESPACE_URI, "property");
+        NodeList properties = getElementsByTagNameNSWithPrefix(dataSourceStep, "property");
         for (int i = 0; i < properties.getLength(); i++) {
             Element property = (Element) properties.item(i);
-            NodeList nameNodes = property.getElementsByTagNameNS(NAMESPACE_URI, "name");
+            NodeList nameNodes = getElementsByTagNameNSWithPrefix(property, "name");
             if (nameNodes.getLength() > 0) {
                 dataSourceVariables.add(nameNodes.item(0).getTextContent());
             }
@@ -252,7 +253,7 @@ public class ReadyApiToOpenApiConverter {
     }
 
     private String extractGroovyScript(Element groovyStep) {
-        NodeList scriptNodes = groovyStep.getElementsByTagNameNS(NAMESPACE_URI, "script");
+        NodeList scriptNodes = getElementsByTagNameNSWithPrefix(groovyStep, "script");
         if (scriptNodes.getLength() > 0) {
             return scriptNodes.item(0).getTextContent();
         }
@@ -301,7 +302,7 @@ public class ReadyApiToOpenApiConverter {
         }
 
         // Set parameters with script modifications
-        NodeList parameters = testStep.getElementsByTagNameNS(NAMESPACE_URI, "parameter");
+        NodeList parameters = getElementsByTagNameNSWithPrefix(testStep, "parameter");
         for (int i = 0; i < parameters.getLength(); i++) {
             Element param = (Element) parameters.item(i);
             Parameter parameter = new Parameter();
@@ -332,7 +333,7 @@ public class ReadyApiToOpenApiConverter {
 
     private List<Server> extractServers(Document doc) {
         List<Server> servers = new ArrayList<>();
-        NodeList interfaces = doc.getElementsByTagNameNS(NAMESPACE_URI, "interface");
+        NodeList interfaces = getElementsByTagNameNSWithPrefix(doc, "interface");
         
         for (int i = 0; i < interfaces.getLength(); i++) {
             Element iface = (Element) interfaces.item(i);
@@ -351,15 +352,36 @@ public class ReadyApiToOpenApiConverter {
     private Document parseXml(String xml) throws ParserConfigurationException, IOException, SAXException {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setNamespaceAware(true);
+        factory.setXIncludeAware(true);
         DocumentBuilder builder = factory.newDocumentBuilder();
         return builder.parse(new InputSource(new StringReader(xml)));
     }
 
+    private NodeList getElementsByTagNameNSWithPrefix(Document doc, String localName) {
+        // Try with namespace URI
+        NodeList nodes = doc.getElementsByTagNameNS(NAMESPACE_URI, localName);
+        if (nodes.getLength() > 0) {
+            return nodes;
+        }
+        // Try with prefix
+        return doc.getElementsByTagName(NAMESPACE_PREFIX + ":" + localName);
+    }
+
+    private NodeList getElementsByTagNameNSWithPrefix(Element element, String localName) {
+        // Try with namespace URI
+        NodeList nodes = element.getElementsByTagNameNS(NAMESPACE_URI, localName);
+        if (nodes.getLength() > 0) {
+            return nodes;
+        }
+        // Try with prefix
+        return element.getElementsByTagName(NAMESPACE_PREFIX + ":" + localName);
+    }
+
     private String extractPath(Element testStep) {
-        NodeList requestElements = testStep.getElementsByTagNameNS(NAMESPACE_URI, "request");
+        NodeList requestElements = getElementsByTagNameNSWithPrefix(testStep, "request");
         if (requestElements.getLength() > 0) {
             Element request = (Element) requestElements.item(0);
-            NodeList endpointElements = request.getElementsByTagNameNS(NAMESPACE_URI, "endpoint");
+            NodeList endpointElements = getElementsByTagNameNSWithPrefix(request, "endpoint");
             if (endpointElements.getLength() > 0) {
                 String endpoint = endpointElements.item(0).getTextContent();
                 if (endpoint.startsWith("http://") || endpoint.startsWith("https://")) {
@@ -377,10 +399,10 @@ public class ReadyApiToOpenApiConverter {
     }
 
     private String extractMethod(Element testStep) {
-        NodeList requestElements = testStep.getElementsByTagNameNS(NAMESPACE_URI, "request");
+        NodeList requestElements = getElementsByTagNameNSWithPrefix(testStep, "request");
         if (requestElements.getLength() > 0) {
             Element request = (Element) requestElements.item(0);
-            NodeList methodElements = request.getElementsByTagNameNS(NAMESPACE_URI, "method");
+            NodeList methodElements = getElementsByTagNameNSWithPrefix(request, "method");
             if (methodElements.getLength() > 0) {
                 return methodElements.item(0).getTextContent();
             }
@@ -390,13 +412,13 @@ public class ReadyApiToOpenApiConverter {
 
     private void processInterface(Element iface, Paths paths) {
         String interfaceName = iface.getAttribute("name");
-        NodeList resources = iface.getElementsByTagNameNS(NAMESPACE_URI, "resource");
+        NodeList resources = getElementsByTagNameNSWithPrefix(iface, "resource");
         
         for (int i = 0; i < resources.getLength(); i++) {
             Element resource = (Element) resources.item(i);
             String resourcePath = resource.getAttribute("path");
             
-            NodeList methods = resource.getElementsByTagNameNS(NAMESPACE_URI, "method");
+            NodeList methods = getElementsByTagNameNSWithPrefix(resource, "method");
             for (int j = 0; j < methods.getLength(); j++) {
                 Element method = (Element) methods.item(j);
                 String methodName = method.getAttribute("name");
@@ -412,12 +434,12 @@ public class ReadyApiToOpenApiConverter {
                 operation.setSummary("From interface: " + interfaceName);
                 
                 // Process request
-                NodeList requests = method.getElementsByTagNameNS(NAMESPACE_URI, "request");
+                NodeList requests = getElementsByTagNameNSWithPrefix(method, "request");
                 if (requests.getLength() > 0) {
                     Element request = (Element) requests.item(0);
                     
                     // Process headers
-                    NodeList headers = request.getElementsByTagNameNS(NAMESPACE_URI, "requestHeader");
+                    NodeList headers = getElementsByTagNameNSWithPrefix(request, "requestHeader");
                     for (int k = 0; k < headers.getLength(); k++) {
                         Element header = (Element) headers.item(k);
                         Parameter parameter = new Parameter();
@@ -427,14 +449,14 @@ public class ReadyApiToOpenApiConverter {
                     }
                     
                     // Process body if present
-                    NodeList bodies = request.getElementsByTagNameNS(NAMESPACE_URI, "requestBody");
+                    NodeList bodies = getElementsByTagNameNSWithPrefix(request, "requestBody");
                     if (bodies.getLength() > 0) {
                         // Add request body schema here
                     }
                 }
                 
                 // Process response
-                NodeList responses = method.getElementsByTagNameNS(NAMESPACE_URI, "response");
+                NodeList responses = getElementsByTagNameNSWithPrefix(method, "response");
                 if (responses.getLength() > 0) {
                     Element response = (Element) responses.item(0);
                     ApiResponses apiResponses = new ApiResponses();
