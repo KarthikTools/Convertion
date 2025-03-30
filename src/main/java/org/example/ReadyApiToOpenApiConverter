@@ -1,0 +1,467 @@
+package com.readyapi.converter;
+
+import io.swagger.v3.core.util.Yaml;
+import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.Operation;
+import io.swagger.v3.oas.models.PathItem;
+import io.swagger.v3.oas.models.Paths;
+import io.swagger.v3.oas.models.parameters.Parameter;
+import io.swagger.v3.oas.models.responses.ApiResponse;
+import io.swagger.v3.oas.models.responses.ApiResponses;
+import io.swagger.v3.oas.models.servers.Server;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXException;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+import java.io.IOException;
+import java.io.StringReader;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public class ReadyApiToOpenApiConverter {
+    private static final String NAMESPACE_URI = "http://eviware.com/soapui/config";
+    private final Set<String> dataSourceVariables = new HashSet<>();
+    private final Map<String, List<GroovyScript>> scriptRegistry = new HashMap<>();
+    private final Map<String, String> functionLibrary = new HashMap<>();
+    private final Map<String, String> propertyRegistry = new HashMap<>();
+    
+    private static class GroovyScript {
+        final String name;
+        final String content;
+        final String type; // "setup", "teardown", "test", "function"
+        final String location; // "functionLibrary", "testCase", "testSuite"
+        final Set<String> variables;
+        final Set<String> modifiedParameters;
+        final Set<String> calledFunctions;
+        
+        GroovyScript(String name, String content, String type, String location) {
+            this.name = name;
+            this.content = content;
+            this.type = type;
+            this.location = location;
+            this.variables = new HashSet<>();
+            this.modifiedParameters = new HashSet<>();
+            this.calledFunctions = new HashSet<>();
+            analyzeScript();
+        }
+        
+        private void analyzeScript() {
+            // Analyze variable usage
+            Pattern varPattern = Pattern.compile("\\$\\{([^}]+)\\}");
+            Matcher varMatcher = varPattern.matcher(content);
+            while (varMatcher.find()) {
+                variables.add(varMatcher.group(1));
+            }
+            
+            // Analyze parameter modifications
+            Pattern paramPattern = Pattern.compile("request\\.setParameter\\(['\"]([^'\"]+)['\"]");
+            Matcher paramMatcher = paramPattern.matcher(content);
+            while (paramMatcher.find()) {
+                modifiedParameters.add(paramMatcher.group(1));
+            }
+            
+            // Analyze function calls
+            Pattern funcPattern = Pattern.compile("([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(");
+            Matcher funcMatcher = funcPattern.matcher(content);
+            while (funcMatcher.find()) {
+                calledFunctions.add(funcMatcher.group(1));
+            }
+        }
+    }
+    
+    public String convert(String readyApiXml) throws Exception {
+        Document readyApiDoc = parseXml(readyApiXml);
+        OpenAPI openAPI = new OpenAPI();
+        
+        // Set basic info
+        Info info = new Info();
+        info.setTitle("Converted ReadyAPI Project");
+        info.setVersion("1.0.0");
+        info.setDescription("Converted from ReadyAPI test project");
+        openAPI.setInfo(info);
+
+        // First pass: collect all resources
+        collectResources(readyApiDoc);
+
+        // Convert paths from interfaces first
+        Paths paths = new Paths();
+        NodeList interfaces = readyApiDoc.getElementsByTagNameNS(NAMESPACE_URI, "interface");
+        for (int i = 0; i < interfaces.getLength(); i++) {
+            Element iface = (Element) interfaces.item(i);
+            processInterface(iface, paths);
+        }
+
+        // Then process paths from test suites
+        NodeList testSuites = readyApiDoc.getElementsByTagNameNS(NAMESPACE_URI, "testSuite");
+        for (int i = 0; i < testSuites.getLength(); i++) {
+            Element testSuite = (Element) testSuites.item(i);
+            String suiteName = testSuite.getAttribute("name");
+            
+            // Process suite-level setup/teardown
+            processSuiteScripts(testSuite);
+            
+            NodeList testCases = testSuite.getElementsByTagNameNS(NAMESPACE_URI, "testCase");
+            for (int j = 0; j < testCases.getLength(); j++) {
+                Element testCase = (Element) testCases.item(j);
+                String caseName = testCase.getAttribute("name");
+                
+                // Process case-level setup/teardown
+                processCaseScripts(testCase);
+                
+                processTestCase(testCase, paths, suiteName, caseName);
+            }
+        }
+        
+        openAPI.setPaths(paths);
+        
+        // Add servers if found in the interface
+        List<Server> servers = extractServers(readyApiDoc);
+        if (!servers.isEmpty()) {
+            openAPI.setServers(servers);
+        }
+        
+        // Add extensions for additional information
+        Map<String, Object> extensions = new HashMap<>();
+        extensions.put("x-ready-api-scripts", scriptRegistry);
+        extensions.put("x-ready-api-functions", functionLibrary);
+        extensions.put("x-ready-api-properties", propertyRegistry);
+        extensions.put("x-ready-api-variables", dataSourceVariables);
+        openAPI.setExtensions(extensions);
+        
+        return Yaml.pretty(openAPI);
+    }
+
+    private void collectResources(Document doc) {
+        // Collect function library
+        NodeList functionLibraryNodes = doc.getElementsByTagNameNS(NAMESPACE_URI, "functionLibrary");
+        for (int i = 0; i < functionLibraryNodes.getLength(); i++) {
+            Element library = (Element) functionLibraryNodes.item(i);
+            String libraryName = library.getAttribute("name");
+            NodeList functions = library.getElementsByTagNameNS(NAMESPACE_URI, "function");
+            for (int j = 0; j < functions.getLength(); j++) {
+                Element function = (Element) functions.item(j);
+                String functionName = function.getAttribute("name");
+                String functionContent = function.getTextContent();
+                functionLibrary.put(functionName, functionContent);
+                
+                // Register function as a script
+                GroovyScript script = new GroovyScript(functionName, functionContent, "function", "functionLibrary");
+                scriptRegistry.put(functionName, Collections.singletonList(script));
+            }
+        }
+        
+        // Collect properties
+        NodeList propertyNodes = doc.getElementsByTagNameNS(NAMESPACE_URI, "property");
+        for (int i = 0; i < propertyNodes.getLength(); i++) {
+            Element property = (Element) propertyNodes.item(i);
+            String propertyName = property.getAttribute("name");
+            String propertyValue = property.getTextContent();
+            propertyRegistry.put(propertyName, propertyValue);
+        }
+    }
+
+    private void processSuiteScripts(Element testSuite) {
+        NodeList setupScripts = testSuite.getElementsByTagNameNS(NAMESPACE_URI, "setupScript");
+        NodeList teardownScripts = testSuite.getElementsByTagNameNS(NAMESPACE_URI, "teardownScript");
+        
+        if (setupScripts.getLength() > 0) {
+            String scriptContent = setupScripts.item(0).getTextContent();
+            GroovyScript script = new GroovyScript("suiteSetup", scriptContent, "setup", "testSuite");
+            scriptRegistry.put("suiteSetup", Collections.singletonList(script));
+        }
+        
+        if (teardownScripts.getLength() > 0) {
+            String scriptContent = teardownScripts.item(0).getTextContent();
+            GroovyScript script = new GroovyScript("suiteTeardown", scriptContent, "teardown", "testSuite");
+            scriptRegistry.put("suiteTeardown", Collections.singletonList(script));
+        }
+    }
+
+    private void processCaseScripts(Element testCase) {
+        NodeList setupScripts = testCase.getElementsByTagNameNS(NAMESPACE_URI, "setupScript");
+        NodeList teardownScripts = testCase.getElementsByTagNameNS(NAMESPACE_URI, "teardownScript");
+        
+        if (setupScripts.getLength() > 0) {
+            String scriptContent = setupScripts.item(0).getTextContent();
+            GroovyScript script = new GroovyScript("caseSetup", scriptContent, "setup", "testCase");
+            scriptRegistry.put("caseSetup", Collections.singletonList(script));
+        }
+        
+        if (teardownScripts.getLength() > 0) {
+            String scriptContent = teardownScripts.item(0).getTextContent();
+            GroovyScript script = new GroovyScript("caseTeardown", scriptContent, "teardown", "testCase");
+            scriptRegistry.put("caseTeardown", Collections.singletonList(script));
+        }
+    }
+
+    private void processTestCase(Element testCase, Paths paths, String suiteName, String caseName) {
+        NodeList testSteps = testCase.getElementsByTagNameNS(NAMESPACE_URI, "testStep");
+        List<GroovyScript> pendingScripts = new ArrayList<>();
+        
+        for (int i = 0; i < testSteps.getLength(); i++) {
+            Element testStep = (Element) testSteps.item(i);
+            String stepType = testStep.getAttribute("type");
+            String stepName = testStep.getAttribute("name");
+            
+            switch (stepType.toLowerCase()) {
+                case "datasource":
+                    processDataSource(testStep);
+                    break;
+                case "restrequest":
+                    PathItem pathItem = convertRestRequest(testStep, pendingScripts, suiteName, caseName);
+                    if (pathItem != null) {
+                        String path = extractPath(testStep);
+                        paths.addPathItem(path, pathItem);
+                    }
+                    pendingScripts.clear();
+                    break;
+                case "groovy":
+                    List<GroovyScript> scripts = scriptRegistry.get(stepName);
+                    if (scripts != null) {
+                        pendingScripts.addAll(scripts);
+                    } else {
+                        // Create new script entry
+                        String scriptContent = extractGroovyScript(testStep);
+                        if (scriptContent != null && !scriptContent.isEmpty()) {
+                            GroovyScript script = new GroovyScript(stepName, scriptContent, "test", "testCase");
+                            scriptRegistry.put(stepName, Collections.singletonList(script));
+                            pendingScripts.add(script);
+                        }
+                    }
+                    break;
+            }
+        }
+    }
+
+    private void processDataSource(Element dataSourceStep) {
+        NodeList properties = dataSourceStep.getElementsByTagNameNS(NAMESPACE_URI, "property");
+        for (int i = 0; i < properties.getLength(); i++) {
+            Element property = (Element) properties.item(i);
+            NodeList nameNodes = property.getElementsByTagNameNS(NAMESPACE_URI, "name");
+            if (nameNodes.getLength() > 0) {
+                dataSourceVariables.add(nameNodes.item(0).getTextContent());
+            }
+        }
+    }
+
+    private String extractGroovyScript(Element groovyStep) {
+        NodeList scriptNodes = groovyStep.getElementsByTagNameNS(NAMESPACE_URI, "script");
+        if (scriptNodes.getLength() > 0) {
+            return scriptNodes.item(0).getTextContent();
+        }
+        return null;
+    }
+
+    private PathItem convertRestRequest(Element testStep, List<GroovyScript> scripts, String suiteName, String caseName) {
+        PathItem pathItem = new PathItem();
+        Operation operation = new Operation();
+        
+        // Set operation metadata
+        operation.setOperationId(testStep.getAttribute("name"));
+        operation.setSummary("From test suite: " + suiteName + ", test case: " + caseName);
+        
+        // Process scripts and their effects
+        Map<String, Object> scriptEffects = new HashMap<>();
+        for (GroovyScript script : scripts) {
+            scriptEffects.put("script-" + script.name, new HashMap<String, Object>() {{
+                put("type", script.type);
+                put("variables", script.variables);
+                put("modifiedParameters", script.modifiedParameters);
+            }});
+        }
+        
+        if (!scriptEffects.isEmpty()) {
+            operation.addExtension("x-ready-api-scripts", scriptEffects);
+        }
+        
+        // Set HTTP method
+        String method = extractMethod(testStep);
+        switch (method.toUpperCase()) {
+            case "GET":
+                pathItem.setGet(operation);
+                break;
+            case "POST":
+                pathItem.setPost(operation);
+                break;
+            case "PUT":
+                pathItem.setPut(operation);
+                break;
+            case "DELETE":
+                pathItem.setDelete(operation);
+                break;
+            default:
+                return null;
+        }
+
+        // Set parameters with script modifications
+        NodeList parameters = testStep.getElementsByTagNameNS(NAMESPACE_URI, "parameter");
+        for (int i = 0; i < parameters.getLength(); i++) {
+            Element param = (Element) parameters.item(i);
+            Parameter parameter = new Parameter();
+            String paramName = param.getAttribute("name");
+            parameter.setName(paramName);
+            parameter.setIn(param.getAttribute("type"));
+            parameter.setRequired("true".equals(param.getAttribute("required")));
+            
+            // Check if parameter is modified by scripts
+            for (GroovyScript script : scripts) {
+                if (script.modifiedParameters.contains(paramName)) {
+                    parameter.addExtension("x-modified-by-script", script.name);
+                }
+            }
+            
+            operation.addParametersItem(parameter);
+        }
+
+        // Set responses
+        ApiResponses responses = new ApiResponses();
+        ApiResponse response = new ApiResponse();
+        response.setDescription("Successful response");
+        responses.addApiResponse("200", response);
+        operation.setResponses(responses);
+
+        return pathItem;
+    }
+
+    private List<Server> extractServers(Document doc) {
+        List<Server> servers = new ArrayList<>();
+        NodeList interfaces = doc.getElementsByTagNameNS(NAMESPACE_URI, "interface");
+        
+        for (int i = 0; i < interfaces.getLength(); i++) {
+            Element iface = (Element) interfaces.item(i);
+            String endpoint = iface.getAttribute("endpoint");
+            if (endpoint != null && !endpoint.isEmpty()) {
+                Server server = new Server();
+                server.setUrl(endpoint);
+                server.setDescription("Extracted from ReadyAPI interface");
+                servers.add(server);
+            }
+        }
+        
+        return servers;
+    }
+
+    private Document parseXml(String xml) throws ParserConfigurationException, IOException, SAXException {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        return builder.parse(new InputSource(new StringReader(xml)));
+    }
+
+    private String extractPath(Element testStep) {
+        NodeList requestElements = testStep.getElementsByTagNameNS(NAMESPACE_URI, "request");
+        if (requestElements.getLength() > 0) {
+            Element request = (Element) requestElements.item(0);
+            NodeList endpointElements = request.getElementsByTagNameNS(NAMESPACE_URI, "endpoint");
+            if (endpointElements.getLength() > 0) {
+                String endpoint = endpointElements.item(0).getTextContent();
+                if (endpoint.startsWith("http://") || endpoint.startsWith("https://")) {
+                    try {
+                        java.net.URL url = new java.net.URL(endpoint);
+                        return url.getPath();
+                    } catch (Exception e) {
+                        return "/";
+                    }
+                }
+                return endpoint;
+            }
+        }
+        return "/";
+    }
+
+    private String extractMethod(Element testStep) {
+        NodeList requestElements = testStep.getElementsByTagNameNS(NAMESPACE_URI, "request");
+        if (requestElements.getLength() > 0) {
+            Element request = (Element) requestElements.item(0);
+            NodeList methodElements = request.getElementsByTagNameNS(NAMESPACE_URI, "method");
+            if (methodElements.getLength() > 0) {
+                return methodElements.item(0).getTextContent();
+            }
+        }
+        return "GET";
+    }
+
+    private void processInterface(Element iface, Paths paths) {
+        String interfaceName = iface.getAttribute("name");
+        NodeList resources = iface.getElementsByTagNameNS(NAMESPACE_URI, "resource");
+        
+        for (int i = 0; i < resources.getLength(); i++) {
+            Element resource = (Element) resources.item(i);
+            String resourcePath = resource.getAttribute("path");
+            
+            NodeList methods = resource.getElementsByTagNameNS(NAMESPACE_URI, "method");
+            for (int j = 0; j < methods.getLength(); j++) {
+                Element method = (Element) methods.item(j);
+                String methodName = method.getAttribute("name");
+                String httpMethod = method.getAttribute("method");
+                
+                PathItem pathItem = paths.get(resourcePath);
+                if (pathItem == null) {
+                    pathItem = new PathItem();
+                }
+                
+                Operation operation = new Operation();
+                operation.setOperationId(methodName);
+                operation.setSummary("From interface: " + interfaceName);
+                
+                // Process request
+                NodeList requests = method.getElementsByTagNameNS(NAMESPACE_URI, "request");
+                if (requests.getLength() > 0) {
+                    Element request = (Element) requests.item(0);
+                    
+                    // Process headers
+                    NodeList headers = request.getElementsByTagNameNS(NAMESPACE_URI, "requestHeader");
+                    for (int k = 0; k < headers.getLength(); k++) {
+                        Element header = (Element) headers.item(k);
+                        Parameter parameter = new Parameter();
+                        parameter.setName(header.getAttribute("name"));
+                        parameter.setIn("header");
+                        operation.addParametersItem(parameter);
+                    }
+                    
+                    // Process body if present
+                    NodeList bodies = request.getElementsByTagNameNS(NAMESPACE_URI, "requestBody");
+                    if (bodies.getLength() > 0) {
+                        // Add request body schema here
+                    }
+                }
+                
+                // Process response
+                NodeList responses = method.getElementsByTagNameNS(NAMESPACE_URI, "response");
+                if (responses.getLength() > 0) {
+                    Element response = (Element) responses.item(0);
+                    ApiResponses apiResponses = new ApiResponses();
+                    ApiResponse apiResponse = new ApiResponse();
+                    apiResponse.setDescription("Response from " + interfaceName);
+                    apiResponses.addApiResponse("200", apiResponse);
+                    operation.setResponses(apiResponses);
+                }
+                
+                // Set the operation based on HTTP method
+                switch (httpMethod.toUpperCase()) {
+                    case "GET":
+                        pathItem.setGet(operation);
+                        break;
+                    case "POST":
+                        pathItem.setPost(operation);
+                        break;
+                    case "PUT":
+                        pathItem.setPut(operation);
+                        break;
+                    case "DELETE":
+                        pathItem.setDelete(operation);
+                        break;
+                }
+                
+                paths.addPathItem(resourcePath, pathItem);
+            }
+        }
+    }
+} 
