@@ -1,0 +1,143 @@
+Absolutely. Here's a reworded, layman's version of your framework discovery questions. This version is simplified and focused on making it easy for anyone — even without a tech background — to understand and answer:
+
+
+---
+
+1. Where does the test input data come from?
+
+Are you using Excel sheets, CSV files, a database, or something else to supply the data to the test cases?
+
+Do you load this data automatically or enter it manually?
+
+
+
+---
+
+2. How are the test cases arranged and run?
+
+Are the test cases written as a sequence of steps?
+
+Do some test steps run before or after others (like setup or cleanup)?
+
+Is there any logic that tells the test to repeat or skip some steps?
+
+
+
+---
+
+3. What types of checks are done during testing?
+
+Do you check the response from the API (like status code, message text, or data values)?
+
+Do you compare the result with what’s in a database?
+
+Do you read from or compare files like XML, CSV, or PDFs?
+
+Do you pass values between steps automatically?
+
+
+
+---
+
+4. How do you get the test results or reports?
+
+Are you using the built-in report from ReadyAPI?
+
+Do you have your own customized report format, like HTML, Excel, or PDF?
+
+Do you store logs or results in a tool like Kibana or just save it locally?
+
+
+
+---
+
+5. Do the tests use any custom logic or code?
+
+Is there any scripting (Groovy code) involved in running or customizing the tests?
+
+Is this scripting used for calculations, decision-making, or changing test data during execution?
+
+
+
+---
+
+6. Are any third-party tools or libraries used in scripting?
+
+Does the script use any extra tools or packages to work with Excel, read JSON, handle files, etc.?
+
+Were any external JAR files or plugins added to the project?
+
+
+
+---
+
+7. How do you handle authentication (like login or tokens)?
+
+Does your test need to log in or get a token before running?
+
+Is there a special request that runs first to get the token?
+
+Do you reuse that token across all other requests?
+
+
+
+---
+
+8. Do you test in different environments (like dev, test, prod)?
+
+Is there an easy way to switch between different environments?
+
+Are environment-specific details (like URLs or tokens) stored in properties or settings?
+
+
+
+---
+
+9. Do you test with multiple sets of data?
+
+Does the same test case run multiple times with different data values (like different usernames, account numbers, etc.)?
+
+Where does this data come from — Excel, database, or CSV?
+
+How do you repeat the test for each row of data?
+
+
+
+---
+
+10. Are any test cases connected or dependent on others?
+
+Do some test cases rely on previous ones to run successfully first?
+
+Are you passing data from one test to another?
+
+
+
+---
+
+11. Can this framework be extended or reused easily?
+
+Do you have shared scripts or utilities that multiple test cases use?
+
+Is it easy to add new types of tests or make changes without redoing everything?
+
+
+
+---
+
+Extra Add-On (Optional):
+
+If you're planning to move this to Postman or REST-assured:
+
+How do you want to group test cases (e.g., by feature or endpoint)?
+
+Do you need to create environment files or variable files?
+
+Should we include token generation or login steps as part of each run?
+
+
+
+---
+
+Let me know if you'd like this in a doc format, or if you want it turned into a form or checklist.
+
