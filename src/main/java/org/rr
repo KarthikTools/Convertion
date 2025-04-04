@@ -2,7 +2,6 @@ import xml.etree.ElementTree as ET
 import json
 import re
 
-# Namespace for ReadyAPI
 ns = {'con': 'http://eviware.com/soapui/config'}
 
 def convert_readyapi_vars_to_postman(value: str) -> str:
@@ -17,296 +16,224 @@ def convert_readyapi_vars_to_postman(value: str) -> str:
 
     pattern = re.compile(r'\$\{([^}]+)\}')
     def replacer(match):
-        # match.group(1) might be "#TestSuite#requestid" or "requestid"
+        # e.g. match might be "#TestSuite#myVar" or just "myVar"
         content = match.group(1)
-        # The actual var name is the last segment after splitting on '#'
+        # The final var name is the last segment after splitting on '#'
         var_name = content.split('#')[-1]
-        # Return a Postman variable reference
         return f'{{{{{var_name}}}}}'
 
     return pattern.sub(replacer, value)
 
+def extract_assertions(rest_request):
+    tests = []
+    assertions = rest_request.findall('.//con:assertion', ns)
+    for assertion in assertions:
+        a_type = assertion.get('type')
+        name = assertion.get('name')
+        if a_type == "Valid HTTP Status Codes":
+            tests.append(f'pm.test("{name}", function () {{ pm.response.to.have.status(200); }});')
+        elif a_type == "JSONPath Match":
+            path = assertion.findtext('.//con:configuration/con:path', namespaces=ns)
+            if path:
+                # Optionally also convert any variables in path, if you want
+                # path = convert_readyapi_vars_to_postman(path)
+                tests.append(f'pm.test("Check JSONPath {path}", function () {{ var jsonData = pm.response.json(); pm.expect(jsonData{path}).to.exist; }});')
+    return tests
+
+def extract_headers(config):
+    headers = []
+    for entry in config.findall('.//con:entry', ns):
+        key = entry.get('key')
+        value = entry.get('value')
+        if key and value:
+            # Convert potential variable usage in key/value
+            key = convert_readyapi_vars_to_postman(key)
+            value = convert_readyapi_vars_to_postman(value)
+            headers.append({"key": key, "value": value})
+    return headers
+
+def extract_property_transfers(config):
+    pre_script = []
+    transfers = config.findall('con:transfers', ns)
+    for transfer in transfers:
+        name = transfer.findtext('con:name', namespaces=ns)
+        source_path = transfer.findtext('con:sourcePath', namespaces=ns)
+        if name and source_path:
+            # Optionally convert variable references in 'name' or 'source_path'
+            name = convert_readyapi_vars_to_postman(name)
+            source_path = convert_readyapi_vars_to_postman(source_path)
+            pre_script.append(f"pm.variables.set('{name}', pm.response.json(){source_path});")
+    return pre_script
+
+def convert_groovy_to_postman_js(groovy_script: str) -> list:
+    js_lines = ["// Converted from Groovy script"]
+    for line in groovy_script.splitlines():
+        original = line
+        line = line.strip()
+        if not line:
+            js_lines.append("")
+            continue
+        if line.startswith("//"):
+            js_lines.append(line)
+            continue
+        # Convert log.info(...) to console.log(...)
+        line = re.sub(r"log\.info\((.+?)\)", r"console.log(\1);", line)
+        # Skip lines that do new JsonSlurper().parseText(...)
+        if "new JsonSlurper().parseText(" in line:
+            continue
+        # def var = testRunner.testCase.testSteps["Step"].getPropertyValue("Prop")
+        match = re.search(r'def (\w+)\s*=\s*testRunner\.testCase\.testSteps\["(.+?)"\]\.getPropertyValue\("(.+?)"\)', line)
+        if match:
+            var_name, step, prop = match.groups()
+            js_lines.append(f"let {var_name} = pm.collectionVariables.get('{step}_{prop}');")
+            continue
+        # def var = parse_json.someField
+        match = re.search(r'def (\w+)\s*=\s*parse_json\.(.+)', line)
+        if match:
+            var_name, field = match.groups()
+            js_lines.append(f"let {var_name} = pm.response.json().{field};")
+            continue
+        # int x = y.toInteger()
+        line = re.sub(r'int (\w+)\s*=\s*(\w+)\.toInteger\(\)', r"let \1 = parseInt(\2);", line)
+        # assert left == right
+        match = re.search(r'assert (.+?)\s*==\s*(.+)', line)
+        if match:
+            left, right = match.groups()
+            js_lines.append(f"pm.test('Assert {left.strip()} == {right.strip()}', function () {{")
+            js_lines.append(f"    pm.expect({left.strip()}).to.eql({right.strip()});")
+            js_lines.append("});")
+            continue
+        # Replace 'def' with 'let'
+        line = re.sub(r'\bdef\b', 'let', line)
+        js_lines.append(f"// Unhandled: {original.strip()}")
+        js_lines.append(line)
+    return js_lines
 
 def convert_readyapi_to_postman(readyapi_file, postman_file):
-    """
-    Example script that reads a ReadyAPI project XML, 
-    builds a Postman collection structure, 
-    and replaces any ReadyAPI-style variables with {{PostmanVars}}.
-    """
     tree = ET.parse(readyapi_file)
     root = tree.getroot()
 
-    # Your final Postman skeleton
     postman_collection = {
         "info": {
-            "name": "gpt1",
-            "description": "Converted from ReadyAPI test suite",
+            "name": "Daimler_Smoke",
+            "description": "Converted from ReadyAPI project",
             "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
         },
         "item": [],
+        "event": [],
         "variable": []
     }
 
-    # We'll keep the existing structure:
-    functional_tests_item = {
-        "name": "Functional Tests",
-        "item": []
-    }
-
-    # Add the testCase (e.g. "Daimler_Smoke") as a folder
-    daimler_smoke_folder = {
-        "name": "Daimler_Smoke",
-        "item": []
-    }
-
-    # We accumulate variables found in the XML
-    # (In your example, you listed them explicitly, 
-    # but you can also parse them from <con:property> or from usage)
-    used_vars = set(["currency","phoneNumber","postalCode","province",
-                     "rewardsAccountId","systemReferenceId"])
-
-    # For demonstration, suppose we have the steps already enumerated:
-    # "REST Request", "Generate_Oauth", "Redeem Request", "Refund Request", "points balance validation"
-    # We'll build items for each of those. In your real code, you'd parse them from the testSteps
-    # but we'll mimic your final structure for clarity.
-
-    # 1) REST Request -> "Status code = 200" test
-    rest_request_item = {
-        "name": "REST Request",
-        "request": {
-            "method": "POST",
-            "header": [
-                {
-                    "key": "Content-Type",
-                    "value": "application/x-www-form-urlencoded"
-                }
-            ],
-            "url": {
-                "raw": convert_readyapi_vars_to_postman("https://ssoa.saifg.rbc.com:9443/as/token.oauth2"),
-                "protocol": "https",
-                "host": ["ssoa","saifg","rbc","com"],
-                "port": "9443",
-                "path": ["as","token.oauth2"]
+    for test_suite in root.findall('con:testSuite', ns):
+        for test_case in test_suite.findall('con:testCase', ns):
+            folder = {
+                "name": test_case.get('name'),
+                "item": []
             }
-        },
-        "event": [
-            {
-                "listen": "test",
-                "script": {
-                    "type": "text/javascript",
-                    "exec": [
-                        "pm.test(\"Status code is 200\", function () {",
-                        "    pm.response.to.have.status(200);",
-                        "});\n",
-                        "var jsonData = {};\ntry {",
-                        "    jsonData = pm.response.json();",
-                        "} catch (e) {",
-                        "    // Response is not JSON or JSON parse failed",
-                        "}\n"
-                    ]
-                }
-            }
-        ]
-    }
 
-    # 2) Generate_Oauth
-    generate_oauth_item = {
-        "name": "Generate_Oauth",
-        "request": {
-            "method": "POST",
-            "header": [
-                {
-                    "key": "Content-Type",
-                    "value": "application/x-www-form-urlencoded"
-                }
-            ],
-            "url": {
-                "raw": convert_readyapi_vars_to_postman("https://ssoa.saifg.rbc.com:9443/as/token.oauth2"),
-                "protocol": "https",
-                "host": ["ssoa","saifg","rbc","com"],
-                "port": "9443",
-                "path": ["as","token.oauth2"]
-            }
-        },
-        "event": [
-            {
-                "listen": "test",
-                "script": {
-                    "type": "text/javascript",
-                    "exec": [
-                        "pm.test(\"Status code is 200\", function () {",
-                        "    pm.response.to.have.status(200);",
-                        "});\n",
-                        "var jsonData = {};\ntry {",
-                        "    jsonData = pm.response.json();",
-                        "} catch (e) {",
-                        "    // Response is not JSON or JSON parse failed",
-                        "}\n"
-                    ]
-                }
-            }
-        ]
-    }
+            pending_pre_script = []
+            last_rest_step = None
 
-    # 3) Redeem Request
-    redeem_request_item = {
-        "name": "Redeem Request",
-        "request": {
-            "method": "POST",
-            "header": [
-                {
-                    "key": "Content-Type",
-                    "value": "application/json"
-                }
-            ],
-            "url": {
-                "raw": convert_readyapi_vars_to_postman("https://saifg.rbc.com/YC10/Partner-Redemption-Services"),
-                "protocol": "https",
-                "host": ["saifg","rbc","com"],
-            },
-            "body": {
-                "mode": "raw",
-                "raw": convert_readyapi_vars_to_postman(
-                    "{\n    \"phoneNumber\": \"{{phoneNumber}}\",\n    \"postalCode\": \"{{postalCode}}\",\n    \"province\": \"{{province}}\",\n    \"taxesAndFees\": {\n        \"amount\": \"1.3\"\n    }\n}"
-                )
-            }
-        },
-        "event": [
-            {
-                "listen": "test",
-                "script": {
-                    "type": "text/javascript",
-                    "exec": [
-                        "pm.test(\"Status code is 200\", function () {",
-                        "    pm.response.to.have.status(200);",
-                        "});\n",
-                        "var jsonData = {};\ntry {",
-                        "    jsonData = pm.response.json();",
-                        "} catch (e) {",
-                        "    // Response is not JSON or JSON parse failed",
-                        "}\n"
-                    ]
-                }
-            }
-        ]
-    }
+            for test_step in test_case.findall('con:testStep', ns):
+                step_type = test_step.get('type')
+                step_name = test_step.get('name')
 
-    # 4) Refund Request
-    refund_request_item = {
-        "name": "Refund Request",
-        "request": {
-            "method": "POST",
-            "header": [
-                {
-                    "key": "Content-Type",
-                    "value": "application/json"
-                }
-            ],
-            "url": {
-                "raw": convert_readyapi_vars_to_postman("https://saifg.rbc.com/YC10/Partner-Redemption-Services"),
-                "protocol": "https",
-                "host": ["saifg","rbc","com"]
-            },
-            "body": {
-                "mode": "raw",
-                "raw": convert_readyapi_vars_to_postman(
-                    "{\n    \"rewardsAccountId\": \"{{rewardsAccountId}}\",\n    \"systemReferenceId\": \"{{systemReferenceId}}\",\n    \"taxesAndFees\": {\n        \"amount\": 1.3,\n        \"currency\": \"{{currency}}\"\n    }\n}"
-                )
-            }
-        },
-        "event": [
-            {
-                "listen": "test",
-                "script": {
-                    "type": "text/javascript",
-                    "exec": [
-                        "pm.test(\"Status code is 200\", function () {",
-                        "    pm.response.to.have.status(200);",
-                        "});\n",
-                        "var jsonData = {};\ntry {",
-                        "    jsonData = pm.response.json();",
-                        "} catch (e) {",
-                        "    // Response is not JSON or JSON parse failed",
-                        "}\n"
-                    ]
-                }
-            }
-        ]
-    }
+                if step_type == "transfer":
+                    config = test_step.find('con:config', ns)
+                    pending_pre_script = extract_property_transfers(config)
 
-    # 5) points balance validation (Groovy -> about:blank)
-    groovy_item = {
-        "name": "points balance validation",
-        "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-                "raw": "about:blank",
-                "protocol": "about",
-                "host": ["blank"]
-            }
-        },
-        "event": [
-            {
-                "listen": "test",
-                "script": {
-                    "type": "text/javascript",
-                    "exec": [
-                        "// Groovy test step: points balance validation",
-                        "// Original Groovy script (manual translation may be required):",
-                        "// import groovy.json.JsonSlurper",
-                        "// def response = testRunner.testCase.testSteps[\"Redeem Request\"].getPropertyValue(\"Response\")",
-                        "// def parse_json = new JsonSlurper().parseText(response)",
-                        "// ",
-                        "// //redeem response",
-                        "// def pointsBalance = parse_json.newAccountBalance",
-                        "// def pointsRedeemed = parse_json.totalPointsRedeemed",
-                        "// ",
-                        "// //log.info pointsBalance",
-                        "// int postRedeemPointsBalance = pointsBalance.toInteger()",
-                        "// int redeemedPoints = pointsRedeemed.toInteger()",
-                        "// def balance = postRedeemPointsBalance + redeemedPoints",
-                        "// log.info balance",
-                        "// ",
-                        "// //refund response",
-                        "// def refundResponse = testRunner.testCase.testSteps[\"Refund Request\"].getPropertyValue(\"Response\")",
-                        "// def parse_json1 = new JsonSlurper().parseText(refundResponse)",
-                        "// def afterRefundBalance = parse_json1.newAccountBalance",
-                        "// int finalBalance = afterRefundBalance.toInteger()",
-                        "// log.info finalBalance",
-                        "// assert balance==finalBalance",
-                        "",
-                        "pm.test(\"Groovy Step: points balance validation\", function () {",
-                        "    // Implement equivalent JS logic here",
-                        "});"
-                    ]
-                }
-            }
-        ]
-    }
+                elif step_type == "restrequest":
+                    config = test_step.find('con:config', ns)
+                    rest_request = config.find('con:restRequest', ns)
+                    original_uri = rest_request.findtext('con:originalUri', default="", namespaces=ns)
+                    # Convert references in the original URI
+                    original_uri = convert_readyapi_vars_to_postman(original_uri)
 
-    # Now gather them into the Daimler_Smoke folder
-    daimler_smoke_folder = {
-        "name": "Daimler_Smoke",
-        "item": [
-            rest_request_item,
-            generate_oauth_item,
-            redeem_request_item,
-            refund_request_item,
-            groovy_item
-        ]
-    }
+                    request_body = rest_request.findtext('con:request', default="", namespaces=ns)
+                    # Convert references in the request body
+                    request_body = convert_readyapi_vars_to_postman(request_body)
 
-    # That folder goes inside "Functional Tests"
-    functional_tests_item["item"].append(daimler_smoke_folder)
+                    headers = extract_headers(config)
 
-    # Then add this top-level item to the collection
-    postman_collection["item"].append(functional_tests_item)
+                    params = []
+                    parameters = rest_request.find('con:parameters', ns)
+                    if parameters:
+                        for param in parameters.findall('con:entry', ns):
+                            k = param.get('key', "")
+                            v = param.get('value', "")
+                            # Convert references in param key/value
+                            k = convert_readyapi_vars_to_postman(k)
+                            v = convert_readyapi_vars_to_postman(v)
+                            if k and v:
+                                params.append({"key": k, "value": v})
 
-    # Convert our set of used vars into actual postman variables
-    postman_collection["variable"] = [{"key": v, "value": ""} for v in sorted(used_vars)]
+                    postman_request = {
+                        "name": step_name,
+                        "request": {
+                            "method": "POST",
+                            "header": headers,
+                            "url": {
+                                "raw": original_uri,
+                                # In some cases, you might parse 'original_uri' 
+                                # to build 'host', 'path', 'protocol' arrays, etc.
+                                # For now, we just store the entire URI in 'host' for demonstration
+                                "host": [original_uri],
+                                "query": params
+                            },
+                            "body": {
+                                "mode": "raw",
+                                "raw": request_body,
+                                "options": {
+                                    "raw": {"language": "json"}
+                                }
+                            }
+                        },
+                        "event": []
+                    }
 
-    # Finally, write out the file
+                    if pending_pre_script:
+                        postman_request["event"].append({
+                            "listen": "prerequest",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": pending_pre_script
+                            }
+                        })
+                        pending_pre_script = []
+
+                    folder["item"].append(postman_request)
+                    last_rest_step = postman_request
+
+                elif step_type == "groovy":
+                    script = test_step.findtext('.//con:config/con:script', namespaces=ns)
+                    js_script = convert_groovy_to_postman_js(script)
+                    if last_rest_step and js_script:
+                        last_rest_step.setdefault("event", [])
+                        last_rest_step["event"].append({
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": js_script
+                            }
+                        })
+
+                elif step_type == "assertionteststep":
+                    assertions = test_step.findall('.//con:assertion', ns)
+                    assertion_scripts = []
+                    for assertion in assertions:
+                        assertion_scripts.extend(extract_assertions(assertion))
+                    if last_rest_step and assertion_scripts:
+                        last_rest_step.setdefault("event", [])
+                        last_rest_step["event"].append({
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": assertion_scripts
+                            }
+                        })
+
+            postman_collection["item"].append(folder)
+
     with open(postman_file, 'w', encoding='utf-8') as f:
         json.dump(postman_collection, f, indent=2)
 
