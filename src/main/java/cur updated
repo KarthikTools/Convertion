@@ -1,0 +1,262 @@
+from lxml import etree
+import json
+import re
+
+ns = {
+    'con': 'http://eviware.com/soapui/config',
+    'xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+    'wadl': 'http://wadl.dev.java.net/2009/02'
+}
+
+def convert_readyapi_vars_to_postman(value: str) -> str:
+    """
+    Converts ReadyAPI variable references of the form:
+      ${#TestSuite#requestid} or ${requestid}
+    into Postman variables of the form:
+      {{requestid}}
+    """
+    if not value:
+        return value
+
+    pattern = re.compile(r'\$\{([^}]+)\}')
+    def replacer(match):
+        # e.g. match might be "#TestSuite#myVar" or just "myVar"
+        content = match.group(1)
+        # The final var name is the last segment after splitting on '#'
+        var_name = content.split('#')[-1]
+        return f'{{{{{var_name}}}}}'
+
+    return pattern.sub(replacer, value)
+
+def extract_assertions(rest_request):
+    tests = []
+    assertions = rest_request.xpath('.//con:assertion', namespaces=ns)
+    for assertion in assertions:
+        a_type = assertion.get('type')
+        name = assertion.get('name')
+        if a_type == "Valid HTTP Status Codes":
+            tests.append(f'pm.test("{name}", function () {{ pm.response.to.have.status(200); }});')
+        elif a_type == "JSONPath Match":
+            path = assertion.xpath('string(.//con:configuration/con:path)', namespaces=ns)
+            if path:
+                # Optionally also convert any variables in path, if you want
+                # path = convert_readyapi_vars_to_postman(path)
+                tests.append(f'pm.test("Check JSONPath {path}", function () {{ var jsonData = pm.response.json(); pm.expect(jsonData{path}).to.exist; }});')
+    return tests
+
+def extract_headers(config):
+    headers = []
+    for entry in config.xpath('.//con:entry', namespaces=ns):
+        key = entry.get('key')
+        value = entry.get('value')
+        if key and value:
+            # Convert potential variable usage in key/value
+            key = convert_readyapi_vars_to_postman(key)
+            value = convert_readyapi_vars_to_postman(value)
+            headers.append({"key": key, "value": value})
+    return headers
+
+def extract_property_transfers(config):
+    pre_script = []
+    transfers = config.xpath('con:transfers', namespaces=ns)
+    for transfer in transfers:
+        name = transfer.xpath('string(con:name)', namespaces=ns)
+        source_path = transfer.xpath('string(con:sourcePath)', namespaces=ns)
+        if name and source_path:
+            # Optionally convert variable references in 'name' or 'source_path'
+            name = convert_readyapi_vars_to_postman(name)
+            source_path = convert_readyapi_vars_to_postman(source_path)
+            pre_script.append(f"pm.variables.set('{name}', pm.response.json(){source_path});")
+    return pre_script
+
+def convert_groovy_to_postman_js(groovy_script: str) -> list:
+    js_lines = ["// Converted from Groovy script"]
+    for line in groovy_script.splitlines():
+        original = line
+        line = line.strip()
+        if not line:
+            js_lines.append("")
+            continue
+        if line.startswith("//"):
+            js_lines.append(line)
+            continue
+        # Convert log.info(...) to console.log(...)
+        line = re.sub(r"log\.info\((.+?)\)", r"console.log(\1);", line)
+        # Skip lines that do new JsonSlurper().parseText(...)
+        if "new JsonSlurper().parseText(" in line:
+            continue
+        # def var = testRunner.testCase.testSteps["Step"].getPropertyValue("Prop")
+        match = re.search(r'def (\w+)\s*=\s*testRunner\.testCase\.testSteps\["(.+?)"\]\.getPropertyValue\("(.+?)"\)', line)
+        if match:
+            var_name, step, prop = match.groups()
+            js_lines.append(f"let {var_name} = pm.collectionVariables.get('{step}_{prop}');")
+            continue
+        # def var = parse_json.someField
+        match = re.search(r'def (\w+)\s*=\s*parse_json\.(.+)', line)
+        if match:
+            var_name, field = match.groups()
+            js_lines.append(f"let {var_name} = pm.response.json().{field};")
+            continue
+        # int x = y.toInteger()
+        line = re.sub(r'int (\w+)\s*=\s*(\w+)\.toInteger\(\)', r"let \1 = parseInt(\2);", line)
+        # assert left == right
+        match = re.search(r'assert (.+?)\s*==\s*(.+)', line)
+        if match:
+            left, right = match.groups()
+            js_lines.append(f"pm.test('Assert {left.strip()} == {right.strip()}', function () {{")
+            js_lines.append(f"    pm.expect({left.strip()}).to.eql({right.strip()});")
+            js_lines.append("});")
+            continue
+        # Replace 'def' with 'let'
+        line = re.sub(r'\bdef\b', 'let', line)
+        js_lines.append(f"// Unhandled: {original.strip()}")
+        js_lines.append(line)
+    return js_lines
+
+def convert_readyapi_to_postman(readyapi_file, postman_file):
+    # Read the XML file content
+    with open(readyapi_file, 'r', encoding='utf-8') as f:
+        xml_content = f.read()
+    
+    # Add the xsi namespace to the root element if it's not already there
+    if 'xmlns:xsi=' not in xml_content:
+        xml_content = xml_content.replace(
+            '<con:soapui-project xmlns:con="http://eviware.com/soapui/config"',
+            '<con:soapui-project xmlns:con="http://eviware.com/soapui/config" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+        )
+    
+    # Remove redundant namespace declarations
+    xml_content = re.sub(r'\s+xmlns:xsi="[^"]*"', '', xml_content)
+    
+    parser = etree.XMLParser(remove_blank_text=True, recover=True)
+    root = etree.fromstring(xml_content.encode('utf-8'), parser)
+
+    postman_collection = {
+        "info": {
+            "name": "Daimler_Smoke",
+            "description": "Converted from ReadyAPI project",
+            "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+        },
+        "item": [],
+        "event": [],
+        "variable": []
+    }
+
+    for test_suite in root.xpath('//con:testSuite', namespaces=ns):
+        for test_case in test_suite.xpath('con:testCase', namespaces=ns):
+            folder = {
+                "name": test_case.get('name'),
+                "item": []
+            }
+
+            pending_pre_script = []
+            last_rest_step = None
+
+            for test_step in test_case.xpath('con:testStep', namespaces=ns):
+                step_type = test_step.get('type')
+                step_name = test_step.get('name')
+
+                if step_type == "transfer":
+                    config = test_step.find('con:config', ns)
+                    pending_pre_script = extract_property_transfers(config)
+
+                elif step_type == "restrequest":
+                    config = test_step.find('con:config', ns)
+                    rest_request = config.find('con:request', ns)
+                    endpoint = rest_request.xpath('string(con:endpoint)', namespaces=ns)
+                    path = rest_request.xpath('string(con:path)', namespaces=ns)
+                    # Convert references in the endpoint and path
+                    endpoint = convert_readyapi_vars_to_postman(endpoint)
+                    path = convert_readyapi_vars_to_postman(path)
+                    original_uri = f"{endpoint}{path}"
+
+                    request_body = rest_request.xpath('string(con:request)', namespaces=ns)
+                    # Convert references in the request body
+                    request_body = convert_readyapi_vars_to_postman(request_body)
+
+                    headers = extract_headers(rest_request)
+
+                    params = []
+                    parameters = rest_request.find('con:parameters', ns)
+                    if parameters is not None:
+                        for param in parameters.xpath('con:parameter', namespaces=ns):
+                            k = param.xpath('string(con:name)', namespaces=ns)
+                            v = param.xpath('string(con:value)', namespaces=ns)
+                            # Convert references in param key/value
+                            k = convert_readyapi_vars_to_postman(k)
+                            v = convert_readyapi_vars_to_postman(v)
+                            if k and v:
+                                params.append({"key": k, "value": v})
+
+                    postman_request = {
+                        "name": step_name,
+                        "request": {
+                            "method": rest_request.xpath('string(con:method)', namespaces=ns) or "GET",
+                            "header": headers,
+                            "url": {
+                                "raw": original_uri,
+                                "host": [endpoint],
+                                "path": [p for p in path.split('/') if p],
+                                "query": params
+                            },
+                            "body": {
+                                "mode": "raw",
+                                "raw": request_body,
+                                "options": {
+                                    "raw": {"language": "json"}
+                                }
+                            }
+                        },
+                        "event": []
+                    }
+
+                    if pending_pre_script:
+                        postman_request["event"].append({
+                            "listen": "prerequest",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": pending_pre_script
+                            }
+                        })
+                        pending_pre_script = []
+
+                    folder["item"].append(postman_request)
+                    last_rest_step = postman_request
+
+                elif step_type == "groovy":
+                    script = test_step.xpath('string(.//con:config/con:script)', namespaces=ns)
+                    js_script = convert_groovy_to_postman_js(script)
+                    if last_rest_step and js_script:
+                        last_rest_step.setdefault("event", [])
+                        last_rest_step["event"].append({
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": js_script
+                            }
+                        })
+
+                elif step_type == "assertionteststep":
+                    assertions = test_step.xpath('.//con:assertion', namespaces=ns)
+                    assertion_scripts = []
+                    for assertion in assertions:
+                        assertion_scripts.extend(extract_assertions(assertion))
+                    if last_rest_step and assertion_scripts:
+                        last_rest_step.setdefault("event", [])
+                        last_rest_step["event"].append({
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": assertion_scripts
+                            }
+                        })
+
+            postman_collection["item"].append(folder)
+
+    with open(postman_file, 'w', encoding='utf-8') as f:
+        json.dump(postman_collection, f, indent=2)
+
+    print(f"Postman collection saved to: {postman_file}")
+
+if __name__ == "__main__":
+    convert_readyapi_to_postman("/Users/kargee/simpleConv/input_files/daimlerinput/daimler-test-suite.xml", "daimler_postman_collection.json") 
