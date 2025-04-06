@@ -1,12 +1,86 @@
-from lxml import etree
+import xml.etree.ElementTree as ET
 import json
 import re
+from urllib.parse import urlparse
 
 ns = {
     'con': 'http://eviware.com/soapui/config',
-    'xsi': 'http://www.w3.org/2001/XMLSchema-instance',
-    'wadl': 'http://wadl.dev.java.net/2009/02'
+    'xsi': 'http://www.w3.org/2001/XMLSchema-instance'
 }
+
+def extract_interface_definitions(root):
+    """Extract interface definitions from the ReadyAPI XML."""
+    interfaces = {}
+    for interface in root.findall('.//con:interface[@xsi:type="con:RestService"]', ns):
+        interface_name = interface.get('name')
+        interface_id = interface.get('id', interface_name)  # Use id if available, fallback to name
+        endpoints = [endpoint.text for endpoint in interface.findall('.//con:endpoint', ns)]
+        resources = {}
+        
+        for resource in interface.findall('.//con:resource', ns):
+            path = resource.get('path', '')
+            methods = {}
+            
+            for method in resource.findall('.//con:method', ns):
+                method_name = method.get('name')
+                http_method = method.get('method', 'GET')
+                parameters = []
+                
+                # Get parameters from resource level
+                for param in resource.findall('.//con:parameters/con:parameter', ns):
+                    param_name = param.findtext('con:name', namespaces=ns)
+                    param_style = param.findtext('con:style', namespaces=ns)
+                    param_default = param.findtext('con:default', namespaces=ns)
+                    param_required = param.findtext('con:required', namespaces=ns) == 'true'
+                    
+                    parameters.append({
+                        'name': param_name,
+                        'style': param_style.upper() if param_style else 'QUERY',  # Default to QUERY
+                        'default': param_default,
+                        'required': param_required
+                    })
+                
+                # Get parameters from method level
+                for param in method.findall('.//con:parameters/con:parameter', ns):
+                    param_name = param.findtext('con:name', namespaces=ns)
+                    param_style = param.findtext('con:style', namespaces=ns)
+                    param_default = param.findtext('con:default', namespaces=ns)
+                    param_required = param.findtext('con:required', namespaces=ns) == 'true'
+                    
+                    parameters.append({
+                        'name': param_name,
+                        'style': param_style.upper() if param_style else 'QUERY',
+                        'default': param_default,
+                        'required': param_required
+                    })
+                
+                methods[method_name] = {
+                    'http_method': http_method,
+                    'parameters': parameters
+                }
+            
+            resources[path] = methods
+        
+        interfaces[interface_id] = {
+            'name': interface_name,
+            'endpoints': endpoints,
+            'resources': resources
+        }
+    
+    return interfaces
+
+def find_matching_interface_resource(interfaces, interface_id, path):
+    """Find the matching interface resource for a given interface ID and path."""
+    if interface_id not in interfaces:
+        return None, None, None
+    
+    interface = interfaces[interface_id]
+    for resource_path, methods in interface['resources'].items():
+        # Simple path matching - could be enhanced with more sophisticated matching
+        if path.endswith(resource_path):
+            return interface, resource_path, methods
+    
+    return None, None, None
 
 def convert_readyapi_vars_to_postman(value: str) -> str:
     """
@@ -20,9 +94,7 @@ def convert_readyapi_vars_to_postman(value: str) -> str:
 
     pattern = re.compile(r'\$\{([^}]+)\}')
     def replacer(match):
-        # e.g. match might be "#TestSuite#myVar" or just "myVar"
         content = match.group(1)
-        # The final var name is the last segment after splitting on '#'
         var_name = content.split('#')[-1]
         return f'{{{{{var_name}}}}}'
 
@@ -30,27 +102,29 @@ def convert_readyapi_vars_to_postman(value: str) -> str:
 
 def extract_assertions(rest_request):
     tests = []
-    assertions = rest_request.xpath('.//con:assertion', namespaces=ns)
+    assertions = rest_request.findall('.//con:assertion', ns)
     for assertion in assertions:
         a_type = assertion.get('type')
         name = assertion.get('name')
         if a_type == "Valid HTTP Status Codes":
-            tests.append(f'pm.test("{name}", function () {{ pm.response.to.have.status(200); }});')
+            codes = assertion.findtext('.//con:configuration/con:codes', namespaces=ns)
+            tests.append(f'pm.test("{name}", function () {{ pm.response.to.have.status({codes}); }});')
         elif a_type == "JSONPath Match":
-            path = assertion.xpath('string(.//con:configuration/con:path)', namespaces=ns)
+            path = assertion.findtext('.//con:configuration/con:path', namespaces=ns)
+            expected = assertion.findtext('.//con:configuration/con:expectedContent', namespaces=ns)
             if path:
-                # Optionally also convert any variables in path, if you want
-                # path = convert_readyapi_vars_to_postman(path)
-                tests.append(f'pm.test("Check JSONPath {path}", function () {{ var jsonData = pm.response.json(); pm.expect(jsonData{path}).to.exist; }});')
+                if expected:
+                    tests.append(f'pm.test("Check JSONPath {path}", function () {{ var jsonData = pm.response.json(); pm.expect(jsonData{path}).to.eql({expected}); }});')
+                else:
+                    tests.append(f'pm.test("Check JSONPath {path}", function () {{ var jsonData = pm.response.json(); pm.expect(jsonData{path}).to.exist; }});')
     return tests
 
 def extract_headers(config):
     headers = []
-    for entry in config.xpath('.//con:entry', namespaces=ns):
+    for entry in config.findall('.//con:entry', ns):
         key = entry.get('key')
         value = entry.get('value')
         if key and value:
-            # Convert potential variable usage in key/value
             key = convert_readyapi_vars_to_postman(key)
             value = convert_readyapi_vars_to_postman(value)
             headers.append({"key": key, "value": value})
@@ -58,12 +132,11 @@ def extract_headers(config):
 
 def extract_property_transfers(config):
     pre_script = []
-    transfers = config.xpath('con:transfers', namespaces=ns)
+    transfers = config.findall('con:transfers', ns)
     for transfer in transfers:
-        name = transfer.xpath('string(con:name)', namespaces=ns)
-        source_path = transfer.xpath('string(con:sourcePath)', namespaces=ns)
+        name = transfer.findtext('con:name', namespaces=ns)
+        source_path = transfer.findtext('con:sourcePath', namespaces=ns)
         if name and source_path:
-            # Optionally convert variable references in 'name' or 'source_path'
             name = convert_readyapi_vars_to_postman(name)
             source_path = convert_readyapi_vars_to_postman(source_path)
             pre_script.append(f"pm.variables.set('{name}', pm.response.json(){source_path});")
@@ -80,26 +153,20 @@ def convert_groovy_to_postman_js(groovy_script: str) -> list:
         if line.startswith("//"):
             js_lines.append(line)
             continue
-        # Convert log.info(...) to console.log(...)
         line = re.sub(r"log\.info\((.+?)\)", r"console.log(\1);", line)
-        # Skip lines that do new JsonSlurper().parseText(...)
         if "new JsonSlurper().parseText(" in line:
             continue
-        # def var = testRunner.testCase.testSteps["Step"].getPropertyValue("Prop")
         match = re.search(r'def (\w+)\s*=\s*testRunner\.testCase\.testSteps\["(.+?)"\]\.getPropertyValue\("(.+?)"\)', line)
         if match:
             var_name, step, prop = match.groups()
             js_lines.append(f"let {var_name} = pm.collectionVariables.get('{step}_{prop}');")
             continue
-        # def var = parse_json.someField
         match = re.search(r'def (\w+)\s*=\s*parse_json\.(.+)', line)
         if match:
             var_name, field = match.groups()
             js_lines.append(f"let {var_name} = pm.response.json().{field};")
             continue
-        # int x = y.toInteger()
         line = re.sub(r'int (\w+)\s*=\s*(\w+)\.toInteger\(\)', r"let \1 = parseInt(\2);", line)
-        # assert left == right
         match = re.search(r'assert (.+?)\s*==\s*(.+)', line)
         if match:
             left, right = match.groups()
@@ -107,29 +174,17 @@ def convert_groovy_to_postman_js(groovy_script: str) -> list:
             js_lines.append(f"    pm.expect({left.strip()}).to.eql({right.strip()});")
             js_lines.append("});")
             continue
-        # Replace 'def' with 'let'
         line = re.sub(r'\bdef\b', 'let', line)
         js_lines.append(f"// Unhandled: {original.strip()}")
         js_lines.append(line)
     return js_lines
 
 def convert_readyapi_to_postman(readyapi_file, postman_file):
-    # Read the XML file content
-    with open(readyapi_file, 'r', encoding='utf-8') as f:
-        xml_content = f.read()
-    
-    # Add the xsi namespace to the root element if it's not already there
-    if 'xmlns:xsi=' not in xml_content:
-        xml_content = xml_content.replace(
-            '<con:soapui-project xmlns:con="http://eviware.com/soapui/config"',
-            '<con:soapui-project xmlns:con="http://eviware.com/soapui/config" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
-        )
-    
-    # Remove redundant namespace declarations
-    xml_content = re.sub(r'\s+xmlns:xsi="[^"]*"', '', xml_content)
-    
-    parser = etree.XMLParser(remove_blank_text=True, recover=True)
-    root = etree.fromstring(xml_content.encode('utf-8'), parser)
+    tree = ET.parse(readyapi_file)
+    root = tree.getroot()
+
+    # Extract interface definitions first
+    interfaces = extract_interface_definitions(root)
 
     postman_collection = {
         "info": {
@@ -142,8 +197,8 @@ def convert_readyapi_to_postman(readyapi_file, postman_file):
         "variable": []
     }
 
-    for test_suite in root.xpath('//con:testSuite', namespaces=ns):
-        for test_case in test_suite.xpath('con:testCase', namespaces=ns):
+    for test_suite in root.findall('con:testSuite', ns):
+        for test_case in test_suite.findall('con:testCase', ns):
             folder = {
                 "name": test_case.get('name'),
                 "item": []
@@ -152,7 +207,7 @@ def convert_readyapi_to_postman(readyapi_file, postman_file):
             pending_pre_script = []
             last_rest_step = None
 
-            for test_step in test_case.xpath('con:testStep', namespaces=ns):
+            for test_step in test_case.findall('con:testStep', ns):
                 step_type = test_step.get('type')
                 step_name = test_step.get('name')
 
@@ -163,47 +218,66 @@ def convert_readyapi_to_postman(readyapi_file, postman_file):
                 elif step_type == "restrequest":
                     config = test_step.find('con:config', ns)
                     rest_request = config.find('con:request', ns)
-                    endpoint = rest_request.xpath('string(con:endpoint)', namespaces=ns)
-                    path = rest_request.xpath('string(con:path)', namespaces=ns)
-                    # Convert references in the endpoint and path
-                    endpoint = convert_readyapi_vars_to_postman(endpoint)
-                    path = convert_readyapi_vars_to_postman(path)
-                    original_uri = f"{endpoint}{path}"
+                    interface_id = config.get('interface')
+                    endpoint = rest_request.findtext('con:endpoint', namespaces=ns)
+                    path = rest_request.findtext('con:path', namespaces=ns)
+                    method = rest_request.findtext('con:method', namespaces=ns)
+                    media_type = rest_request.findtext('con:mediaType', namespaces=ns)
 
-                    request_body = rest_request.xpath('string(con:request)', namespaces=ns)
-                    # Convert references in the request body
+                    # Find matching interface resource
+                    interface, resource_path, methods = find_matching_interface_resource(interfaces, interface_id, path)
+                    
+                    # Get parameters from interface definition if available
+                    parameters = []
+                    headers = []
+                    if methods:
+                        for method_name, method_info in methods.items():
+                            if method_info['http_method'] == method:
+                                for param in method_info['parameters']:
+                                    param_name = param['name']
+                                    param_style = param['style']
+                                    param_default = param['default']
+                                    
+                                    # Find the parameter value from the request
+                                    param_value = param_default  # Use default if no value provided
+                                    for req_param in rest_request.findall('.//con:parameters/con:parameter', ns):
+                                        if req_param.findtext('con:name', namespaces=ns) == param_name:
+                                            param_value = req_param.findtext('con:value', namespaces=ns)
+                                            break
+                                    
+                                    if param_style == 'QUERY':
+                                        parameters.append({
+                                            "key": param_name,
+                                            "value": convert_readyapi_vars_to_postman(param_value)
+                                        })
+                                    elif param_style == 'HEADER':
+                                        headers.append({
+                                            "key": param_name,
+                                            "value": convert_readyapi_vars_to_postman(param_value)
+                                        })
+
+                    # Add any additional headers from the request
+                    headers.extend(extract_headers(rest_request))
+
+                    request_body = rest_request.findtext('con:request', default="", namespaces=ns)
                     request_body = convert_readyapi_vars_to_postman(request_body)
-
-                    headers = extract_headers(rest_request)
-
-                    params = []
-                    parameters = rest_request.find('con:parameters', ns)
-                    if parameters is not None:
-                        for param in parameters.xpath('con:parameter', namespaces=ns):
-                            k = param.xpath('string(con:name)', namespaces=ns)
-                            v = param.xpath('string(con:value)', namespaces=ns)
-                            # Convert references in param key/value
-                            k = convert_readyapi_vars_to_postman(k)
-                            v = convert_readyapi_vars_to_postman(v)
-                            if k and v:
-                                params.append({"key": k, "value": v})
 
                     postman_request = {
                         "name": step_name,
                         "request": {
-                            "method": rest_request.xpath('string(con:method)', namespaces=ns) or "GET",
+                            "method": method,
                             "header": headers,
                             "url": {
-                                "raw": original_uri,
-                                "host": [endpoint],
+                                "raw": f"{endpoint}{path}",
+                                "host": [urlparse(endpoint).netloc],
                                 "path": [p for p in path.split('/') if p],
-                                "query": params
+                                "query": parameters
                             },
                             "body": {
                                 "mode": "raw",
                                 "raw": request_body,
                                 "options": {
-                                    "raw": {"language": "json"}
+                                    "raw": {"language": "json" if media_type == "application/json" else "text"}
                                 }
                             }
                         },
@@ -220,11 +294,22 @@ def convert_readyapi_to_postman(readyapi_file, postman_file):
                         })
                         pending_pre_script = []
 
+                    # Add assertions from the request
+                    assertion_scripts = extract_assertions(config)
+                    if assertion_scripts:
+                        postman_request["event"].append({
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": assertion_scripts
+                            }
+                        })
+
                     folder["item"].append(postman_request)
                     last_rest_step = postman_request
 
                 elif step_type == "groovy":
-                    script = test_step.xpath('string(.//con:config/con:script)', namespaces=ns)
+                    script = test_step.findtext('.//con:config/con:script', namespaces=ns)
                     js_script = convert_groovy_to_postman_js(script)
                     if last_rest_step and js_script:
                         last_rest_step.setdefault("event", [])
@@ -237,7 +322,7 @@ def convert_readyapi_to_postman(readyapi_file, postman_file):
                         })
 
                 elif step_type == "assertionteststep":
-                    assertions = test_step.xpath('.//con:assertion', namespaces=ns)
+                    assertions = test_step.findall('.//con:assertion', ns)
                     assertion_scripts = []
                     for assertion in assertions:
                         assertion_scripts.extend(extract_assertions(assertion))
@@ -257,6 +342,3 @@ def convert_readyapi_to_postman(readyapi_file, postman_file):
         json.dump(postman_collection, f, indent=2)
 
     print(f"Postman collection saved to: {postman_file}")
-
-if __name__ == "__main__":
-    convert_readyapi_to_postman("/Users/kargee/simpleConv/input_files/daimlerinput/daimler-test-suite.xml", "daimler_postman_collection.json") 
