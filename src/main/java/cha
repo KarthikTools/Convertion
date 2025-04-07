@@ -1,0 +1,80 @@
+// Postman test script to write any response to CSV
+const writeResponseToCSV = (responseData) => {
+    try {
+        // Get the raw response text
+        const responseText = pm.response.text();
+        
+        // Get current timestamp for filename
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `postman_response_${timestamp}.csv`;
+        
+        let csvContent = '';
+        
+        try {
+            // Try to parse as JSON first
+            const jsonData = JSON.parse(responseText);
+            
+            // Handle JSON data
+            if (Array.isArray(jsonData)) {
+                // Array of objects
+                if (jsonData.length > 0) {
+                    const headers = Object.keys(jsonData[0]);
+                    csvContent += headers.join(',') + '\n';
+                    
+                    jsonData.forEach(item => {
+                        const row = headers.map(header => {
+                            const value = item[header];
+                            return formatCSVValue(value);
+                        });
+                        csvContent += row.join(',') + '\n';
+                    });
+                }
+            } else if (typeof jsonData === 'object') {
+                // Single object
+                const headers = Object.keys(jsonData);
+                csvContent += headers.join(',') + '\n';
+                
+                const row = headers.map(header => {
+                    const value = jsonData[header];
+                    return formatCSVValue(value);
+                });
+                csvContent += row.join(',') + '\n';
+            }
+        } catch (e) {
+            // If not JSON, treat as plain text
+            csvContent = 'Response\n';
+            csvContent += formatCSVValue(responseText);
+        }
+        
+        // Helper function to format CSV values
+        function formatCSVValue(value) {
+            if (value === null || value === undefined) {
+                return '';
+            }
+            const stringValue = String(value);
+            if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
+                return `"${stringValue.replace(/"/g, '""')}"`;
+            }
+            return stringValue;
+        }
+        
+        // Save the file
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = filename;
+        link.click();
+        
+        console.log(`CSV file saved as: ${filename}`);
+        return true;
+    } catch (error) {
+        console.error('Error writing to CSV:', error);
+        return false;
+    }
+};
+
+// Example usage in Postman test script
+pm.test("Write response to CSV", function () {
+    const success = writeResponseToCSV(pm.response.text());
+    pm.expect(success).to.be.true;
+}); 
