@@ -1,80 +1,188 @@
-// Postman test script to write any response to CSV
-const writeResponseToCSV = (responseData) => {
-    try {
-        // Get the raw response text
-        const responseText = pm.response.text();
-        
-        // Get current timestamp for filename
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const filename = `postman_response_${timestamp}.csv`;
-        
-        let csvContent = '';
-        
-        try {
-            // Try to parse as JSON first
-            const jsonData = JSON.parse(responseText);
-            
-            // Handle JSON data
-            if (Array.isArray(jsonData)) {
-                // Array of objects
-                if (jsonData.length > 0) {
-                    const headers = Object.keys(jsonData[0]);
-                    csvContent += headers.join(',') + '\n';
-                    
-                    jsonData.forEach(item => {
-                        const row = headers.map(header => {
-                            const value = item[header];
-                            return formatCSVValue(value);
-                        });
-                        csvContent += row.join(',') + '\n';
-                    });
-                }
-            } else if (typeof jsonData === 'object') {
-                // Single object
-                const headers = Object.keys(jsonData);
-                csvContent += headers.join(',') + '\n';
-                
-                const row = headers.map(header => {
-                    const value = jsonData[header];
-                    return formatCSVValue(value);
-                });
-                csvContent += row.join(',') + '\n';
-            }
-        } catch (e) {
-            // If not JSON, treat as plain text
-            csvContent = 'Response\n';
-            csvContent += formatCSVValue(responseText);
-        }
-        
-        // Helper function to format CSV values
-        function formatCSVValue(value) {
-            if (value === null || value === undefined) {
-                return '';
-            }
-            const stringValue = String(value);
-            if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
-                return `"${stringValue.replace(/"/g, '""')}"`;
-            }
-            return stringValue;
-        }
-        
-        // Save the file
-        const blob = new Blob([csvContent], { type: 'text/csv' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = filename;
-        link.click();
-        
-        console.log(`CSV file saved as: ${filename}`);
-        return true;
-    } catch (error) {
-        console.error('Error writing to CSV:', error);
-        return false;
-    }
-};
+#!/usr/bin/env python3
+import sys, re
+from tree_sitter import Parser
+from tree_sitter_languages import get_language
 
-// Example usage in Postman test script
-pm.test("Write response to CSV", function () {
-    const success = writeResponseToCSV(pm.response.text());
-    pm.expect(success).to.be.true;
-}); 
+# === Generic Postman helper to repeat a request ===
+HELPER_JS = """\
+function repeatRequest(requestName, totalVarName, indexVarName) {
+    indexVarName = indexVarName || totalVarName + '_index';
+    let index = parseInt(pm.environment.get(indexVarName) || '0', 10);
+    let total = parseInt(pm.environment.get(totalVarName) || '0', 10);
+    if (index < total) {
+        pm.environment.set(indexVarName, index + 1);
+        postman.setNextRequest(requestName);
+    } else {
+        pm.environment.unset(indexVarName);
+    }
+}
+"""
+
+class GroovyToPostmanGenericV3:
+    def __init__(self):
+        self.parser = Parser()
+        self.parser.set_language(get_language('groovy'))
+        # map node types to handler methods
+        self.handlers = {
+            'method_declaration':       self._handle_method_decl,
+            'block':                    self._handle_block,
+            'expression_statement':     self._handle_expr_stmt,
+            'method_call':              self._handle_method_call,
+            'if_statement':             self._handle_if_statement,
+            'for_statement':            self._handle_for_statement,
+            'while_statement':          self._handle_while_statement,
+            'local_variable_declaration': self._handle_var_decl,
+            'assignment_expression':    self._handle_assignment,
+        }
+
+    def convert(self, groovy_code: str) -> str:
+        tree = self.parser.parse(groovy_code.encode('utf8'))
+        root = tree.root_node
+
+        lines = ["// Auto-generated Postman JS", HELPER_JS]
+        for node in root.named_children:
+            if node.type == 'method_declaration':
+                lines += self._emit(node, groovy_code, indent=0)
+                lines.append("")
+        return "\n".join(lines)
+
+    def _emit(self, node, code, indent):
+        handler = self.handlers.get(node.type, self._handle_default)
+        return handler(node, code, indent)
+
+    def _handle_method_decl(self, node, code, indent):
+        name_node = node.child_by_field_name('name')
+        name = code[name_node.start_byte:name_node.end_byte]
+
+        params = []
+        params_node = node.child_by_field_name('parameters')
+        if params_node:
+            for p in params_node.named_children:
+                pname_node = p.child_by_field_name('name')
+                pname = code[pname_node.start_byte:pname_node.end_byte]
+                params.append(pname)
+
+        ind = ' ' * indent
+        sig = f"{ind}function {name}({', '.join(params)}) {{"
+        lines = [sig]
+
+        body_node = node.child_by_field_name('body')
+        if body_node:
+            lines += self._emit(body_node, code, indent+2)
+
+        lines.append(ind + "}")
+
+        # auto-invoke
+        if params:
+            args = ", ".join([f"pm.environment.get('{p}')" for p in params])
+            lines.append(f"{ind}// invoke")
+            lines.append(f"{ind}{name}({args});")
+
+        return lines
+
+    def _handle_block(self, node, code, indent):
+        lines = []
+        for child in node.named_children:
+            lines += self._emit(child, code, indent)
+        return lines
+
+    def _handle_expr_stmt(self, node, code, indent):
+        text = code[node.start_byte:node.end_byte].strip()
+        # Groovy assert -> Postman pm.test
+        if text.startswith('assert '):
+            m = re.match(r'assert\s+(.+?)\s*==\s*(.+)', text)
+            if m:
+                left, right = m.groups()
+                return [f"{' ' * indent}pm.test('Assert {left.strip()} == {right.strip()}', function() {{ pm.expect({left.strip()}).to.eql({right.strip()}); }});"]
+        return [( ' ' * indent) + text + ';']
+
+    def _handle_method_call(self, node, code, indent):
+        full = code[node.start_byte:node.end_byte].strip()
+        # log.info -> console.log
+        if full.startswith('log.info'):
+            msg = re.search(r'log\.info\((.+)\)', full)
+            if msg:
+                return [( ' ' * indent) + f"console.log({msg.group(1)});"]
+        # JsonSlurper -> JSON.parse
+        if 'new JsonSlurper().parseText' in full:
+            m = re.search(r'new JsonSlurper\(\)\.parseText\((.+)\)', full)
+            if m:
+                return [( ' ' * indent) + f"let jsonData = JSON.parse({m.group(1)});"]
+        # repeat loops
+        m = re.match(r'(\w+)\.times\s*\{\s*([\s\S]+?)\s*\}\s*$', full)
+        if m:
+            receiver, body = m.groups()
+            call_match = re.search(r'\w+\.run\(\s*["\']([^"\']+)["\']', body)
+            if call_match:
+                target = call_match.group(1)
+                return [( ' ' * indent) + f"repeatRequest('{target}', '{receiver}');"]
+        # property transfer getPropertyValue -> pm.environment.get
+        if 'getPropertyValue' in full:
+            m = re.search(r'testSteps\["(.+?)"\]\.getPropertyValue\("(.+?)"\)', full)
+            if m:
+                step, prop = m.groups()
+                var = f"{step}_{prop}"
+                return [( ' ' * indent) + f"let {prop} = pm.environment.get('{var}');"]
+        return [( ' ' * indent) + full + ';']
+
+    def _handle_if_statement(self, node, code, indent):
+        cond = node.child_by_field_name('condition')
+        cons = node.child_by_field_name('consequence')
+        alt  = node.child_by_field_name('alternative')
+        cond_txt = code[cond.start_byte:cond.end_byte].strip()
+        ind = ' ' * indent
+        lines = [ind + f"if ({cond_txt}) {{"]
+        lines += self._emit(cons, code, indent+2)
+        lines.append(ind + "}")
+        if alt:
+            lines.append(ind + "else {")
+            lines += self._emit(alt, code, indent+2)
+            lines.append(ind + "}")
+        return lines
+
+    def _handle_for_statement(self, node, code, indent):
+        params = node.child_by_field_name('loop_parameters')
+        body   = node.child_by_field_name('body')
+        params_txt = code[params.start_byte:params.end_byte].strip()
+        ind = ' ' * indent
+        lines = [ind + f"for ({params_txt}) {{"]
+        lines += self._emit(body, code, indent+2)
+        lines.append(ind + "}")
+        return lines
+
+    def _handle_while_statement(self, node, code, indent):
+        cond = node.child_by_field_name('condition')
+        body = node.child_by_field_name('body')
+        cond_txt = code[cond.start_byte:cond.end_byte].strip()
+        ind = ' ' * indent
+        lines = [ind + f"while ({cond_txt}) {{"]
+        lines += self._emit(body, code, indent+2)
+        lines.append(ind + "}")
+        return lines
+
+    def _handle_var_decl(self, node, code, indent):
+        # local_variable_declaration
+        decl = code[node.start_byte:node.end_byte].strip()
+        # e.g. "int i = 0"
+        m = re.match(r"(\w+)\s+(\w+)\s*=\s*(.+)", decl)
+        if m:
+            _, name, expr = m.groups()
+            return [( ' ' * indent) + f"let {name} = {expr};"]
+        return [( ' ' * indent) + decl + ';']
+
+    def _handle_assignment(self, node, code, indent):
+        text = code[node.start_byte:node.end_byte].strip()
+        return [( ' ' * indent) + text + ';']
+
+    def _handle_default(self, node, code, indent):
+        txt = code[node.start_byte:node.end_byte].strip().replace("\n"," ")
+        return [( ' ' * indent) + txt + ';']
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print(f"Usage: {sys.argv[0]} <source.groovy>", file=sys.stderr)
+        sys.exit(1)
+
+    src = open(sys.argv[1], 'r', encoding='utf8').read()
+    converter = GroovyToPostmanGenericV3()
+    print(converter.convert(src))
