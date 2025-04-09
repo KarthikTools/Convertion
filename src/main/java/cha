@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys, re
 from tree_sitter import Parser
-from tree_sitter_languages import get_language
+from tree_sitter_languages import get_parser
 
 # === Generic Postman helper to repeat a request ===
 HELPER_JS = """\
@@ -20,14 +20,13 @@ function repeatRequest(requestName, totalVarName, indexVarName) {
 
 class GroovyToPostmanGenericV3:
     def __init__(self):
-        self.parser = Parser()
-        self.parser.set_language(get_language('groovy'))
+        self.parser = get_parser('java')  # Using Java grammar since Groovy is based on Java
         # map node types to handler methods
         self.handlers = {
             'method_declaration':       self._handle_method_decl,
             'block':                    self._handle_block,
             'expression_statement':     self._handle_expr_stmt,
-            'method_call':              self._handle_method_call,
+            'method_invocation':        self._handle_method_call,  # Changed from method_call to method_invocation
             'if_statement':             self._handle_if_statement,
             'for_statement':            self._handle_for_statement,
             'while_statement':          self._handle_while_statement,
@@ -41,8 +40,8 @@ class GroovyToPostmanGenericV3:
 
         lines = ["// Auto-generated Postman JS", HELPER_JS]
         for node in root.named_children:
+            lines += self._emit(node, groovy_code, indent=0)
             if node.type == 'method_declaration':
-                lines += self._emit(node, groovy_code, indent=0)
                 lines.append("")
         return "\n".join(lines)
 
@@ -185,4 +184,4 @@ if __name__ == '__main__':
 
     src = open(sys.argv[1], 'r', encoding='utf8').read()
     converter = GroovyToPostmanGenericV3()
-    print(converter.convert(src))
+    print(converter.convert(src)) 
