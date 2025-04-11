@@ -1,0 +1,29 @@
+Overall Coverage
+| Project Complexity | Conversion Utility | Copilot Assistance | Manual Review |
+|--------------------|-------------------|-------------------|--------------|
+| Simple Projects | 80% | 15% | 5% |
+| Medium Projects | 60% | 25% | 15% |
+| Complex Projects | 40% | 30% | 30% |
+Feature Support Status
+| Feature | Support Level | Primary Role |
+|---------|--------------|-------------|
+| REST Services | Full | Utility |
+| Basic HTTP Methods | Full | Utility |
+| Query Parameters | Full | Utility |
+| Basic Headers | Full | Utility |
+| JSON Request Bodies | Full | Utility |
+| Variable Substitution | Full | Utility |
+| Test Suite Structure | Full | Utility |
+| HTTP Status Assertions | Full | Utility |
+| Basic JSONPath | Partial | Utility + Copilot |
+| Groovy to JS Conversion | Partial | Utility + Copilot |
+| Complex Assertions | Partial | Copilot + Manual |
+| Authentication Flows | Partial | Copilot + Manual |
+| Property Transfers | Partial | Utility + Copilot |
+| SOAP Services | None | Manual |
+| Data Sources | None | Manual |
+| Custom Properties | None | Manual + Copilot |
+| OAuth Configurations | None | Manual + Copilot |
+| Mock Services | None | Manual |
+
+
