@@ -1,0 +1,121 @@
+// === CONVERSION INSTRUCTION ===
+//
+// Convert the following ReadyAPI Groovy script into semantically equivalent Postman JavaScript
+// Target: Postman Pre-request Script or Test Script
+// DO NOT convert line-by-line. Rewrite using idiomatic Postman APIs.
+// Postman API primitives available: 
+//    - pm.environment / pm.variables / pm.collectionVariables
+//    - pm.response.json(), pm.response.text(), xml2Json()
+//    - pm.test(), pm.expect(), pm.sendRequest()
+//    - console.log(), console.error(), throw new Error()
+//
+// Map Groovy-specific ReadyAPI APIs to:
+//    - context.expand(...)                → pm.variables.get() or response parsing
+//    - testCase.setPropertyValue(...)     → pm.variables.set(), pm.environment.set()
+//    - testRunner.runTestStepByName(...)  → pm.sendRequest() for HTTP logic (manual flow chaining)
+//    - log.info / log.error               → console.log / console.error
+//    - property transfers                 → assign from response to variable
+//    - assertions                         → pm.test + pm.expect
+//    - DataSink writing                   → console.log structured output or variable set
+//    - Retry logic                        → set attempt count using pm.variables + recursive pm.sendRequest
+//    - XML parsing                        → xml2Json(pm.response.text())
+//    - Timestamp comparisons              → Date comparison using Date.parse() or new Date(...)
+//    - Dynamic header/token assignment    → pm.request.headers.add(...) or via pre-request logic
+
+// === READYAPI GROOVY SCRIPT ===
+/*
+Sample 1: OAuth Token Retrieval
+if (!context.testCase.getPropertyValue("authToken")) {
+    testRunner.runTestStepByName("GetAccessToken")
+}
+
+Sample 2: Looping over steps
+['GetUser', 'GetAccount'].each { step ->
+    def code = context.expand("\${${step}#Response#StatusCode}").toInteger()
+    if (code != 200) {
+        log.error("${step} failed")
+        testRunner.fail("${step} failed")
+    }
+}
+
+Sample 3: XML parsing and conditional
+def xml = new XmlSlurper().parseText(context.expand('${GetBalance#Response}'))
+if (xml.status.text() != 'SUCCESS') {
+    log.error("Bad status")
+}
+*/
+
+// === POSTMAN JAVASCRIPT CONVERSION ===
+// Apply conversion per concept
+
+// === 1. PREREQUISITE: OAuth Token Handling ===
+if (!pm.environment.get("authToken")) {
+    pm.sendRequest({
+        url: pm.environment.get("authUrl"),
+        method: 'POST',
+        header: {
+            'Content-Type': 'application/json'
+        },
+        body: {
+            mode: 'raw',
+            raw: JSON.stringify({
+                client_id: pm.environment.get("clientId"),
+                client_secret: pm.environment.get("clientSecret"),
+                grant_type: 'client_credentials'
+            })
+        }
+    }, function (err, res) {
+        if (!err && res.code === 200) {
+            let json = res.json();
+            pm.environment.set("authToken", json.access_token);
+        } else {
+            console.error("Failed to get access token");
+        }
+    });
+}
+
+// === 2. Looping Over Test Step Results ===
+let stepNames = ['GetUser', 'GetAccount'];
+stepNames.forEach(step => {
+    let status = parseInt(pm.variables.get(`${step}_statusCode`), 10);
+    pm.test(`${step} should return 200`, function () {
+        pm.expect(status).to.eql(200);
+    });
+});
+
+// === 3. Chained Property Transfer ===
+let json = pm.response.json();
+pm.environment.set("userId", json.id);
+pm.environment.set("userEmail", json.email);
+
+// === 4. XML Parsing and Assertion ===
+let xml = xml2Json(pm.response.text());
+pm.test("Balance status should be SUCCESS", function () {
+    pm.expect(xml.balance.status).to.eql("SUCCESS");
+});
+
+// === 5. Timestamp Comparison ===
+let ts = new Date(pm.response.json().timestamp);
+let now = new Date();
+pm.test("Timestamp is in the past", function () {
+    pm.expect(ts.getTime()).to.be.below(now.getTime());
+});
+
+// === 6. DataSink Logging Simulation ===
+let id = pm.response.json().id;
+let name = pm.response.json().name;
+console.log(`EXPORT_DATA,userId=${id},name=${name}`);
+pm.environment.set("latestUserId", id);
+
+// === 7. Retry Logic with Counter ===
+let retryCount = parseInt(pm.variables.get("retryCount") || "0", 10);
+if (retryCount < 3 && pm.response.code !== 200) {
+    pm.variables.set("retryCount", retryCount + 1);
+    postman.setNextRequest(pm.info.requestName); // rerun current request
+}
+
+// === 8. Dynamic Header Assignment (pre-request) ===
+pm.request.headers.add({
+    key: 'Authorization',
+    value: 'Bearer ' + pm.environment.get("authToken")
+});
