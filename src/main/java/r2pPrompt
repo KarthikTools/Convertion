@@ -1,0 +1,41 @@
+"""
+[Context / Role Statement]
+You are an assistant converting a ReadyAPI test step into a Postman v2.1.0 collection item or script. 
+In ReadyAPI, test steps can be of type:
+ - restrequest
+ - properties
+ - transfer
+ - groovy
+ - assertionteststep
+ - soaprequest
+ - data source/data sink
+We want to convert each step into a corresponding Postman item (or environment variable setting, or script) so that the overall flow can be replicated in Postman.
+
+[Goal / Task]
+Given the following ReadyAPI test step XML snippet, produce a valid JSON output in Postman Collection (v2.1.0) format, or a partial snippet if some logic cannot be fully automated. The output must reflect:
+1) Step type:
+   - restrequest → Postman request item with method, url, headers, etc.
+   - properties → Postman environment or collection variables
+   - transfer → Use pm.environment.set(...) in a test script (or similar)
+   - groovy → convert to JavaScript in either a 'pre-request' or 'test' script if possible
+   - assertionteststep → Postman test script (pm.test(...) with status, JSON body checks, etc.)
+2) Flow control: if the snippet references chaining or property expansions (like ${#TestCase#var}), convert them to Postman variables {{var}}, and if there’s a next-step reference, use postman.setNextRequest().
+3) If an assertion mentions “Valid HTTP Status Codes=200,” create a pm.test(...) for pm.response.to.have.status(200).
+
+[References]
+- Postman Collection Schema: https://schema.getpostman.com/json/collection/v2.1.0/collection.json
+- For Groovy to JS conversion, do best-effort line-level translation (especially for property expansions or logging). If too complex, produce partial stubs with TODO comments.
+
+[Input Snippet]
+PASTE your ReadyAPI <con:testStep> snippet here, from <con:testStep ...> to </con:testStep>, or any relevant portion.
+
+[Output Format Requirements]
+- Return ONLY valid JSON for a Postman item or snippet. 
+- No extra commentary or code. 
+- If partial, highlight with “// TODO” or “// partially converted” in the script lines.
+
+[Instruction for Copilot]
+- Use a single JSON object (or JSON array if multiple items). 
+- Keep the structure minimal but correct per the schema. 
+- Replace property expansions ${Something} with {{Something}}.
+"""
