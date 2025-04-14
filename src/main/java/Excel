@@ -1,0 +1,78 @@
+To create an Excel-driven API E2E Test Automation Framework, your Excel should serve as the single source of truth for test case definitions, data inputs, validations, and sequencing. Here's how to structure it logically and scalably:
+
+
+---
+
+1. Excel Structure - Multiple Sheets
+
+Use multiple sheets to isolate concerns:
+
+a. TestCases
+
+Execute: Yes/No toggle to select active test cases
+
+PreRequisite: Optional dependencies
+
+TestSteps: Comma-separated list of steps to run
+
+
+
+---
+
+b. TestSteps
+
+ExtractVars: Set Postman-style variables (e.g. userId=id means extract id from response and store in userId)
+
+Assertions: JSONPath and expected value
+
+SaveResponse: Yes/No – store raw response
+
+
+
+---
+
+c. Headers
+
+> One HeaderID can have multiple rows for multi-header sets.
+
+
+
+
+---
+
+d. Bodies
+
+
+---
+
+e. TestData (Optional for Data-Driven Runs)
+
+
+---
+
+2. Design Considerations
+
+Your framework engine will read rows from TestCases, run steps from TestSteps, replace variables using TestData, parse headers and bodies, send requests, extract variables, and assert responses.
+
+Use Jinja2-style or Postman-style double curly braces for dynamic variable substitution.
+
+Responses can be saved for chaining in subsequent steps or for logging/debugging.
+
+
+
+---
+
+3. Optional Sheets
+
+Environment Config: base URL, auth tokens, database connections
+
+DBValidation (if needed): SQL queries and expected results
+
+KibanaLogCheck (if needed): API call IDs and expected log patterns
+
+
+
+---
+
+Would you like a sample Excel template file generated from this schema? Or the Python/Java code that reads this and drives API execution?
+
