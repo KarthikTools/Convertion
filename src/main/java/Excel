@@ -1,27 +1,45 @@
 """
 You are enhancing a Python script that converts ReadyAPI test steps to Postman v2.1 format.
 
-The input is an XML project file from ReadyAPI. Each test step can be of type 'restrequest', 'graphql', or others like 'transfer' and 'groovy'.
+The input is an XML file from ReadyAPI. Each test step can be of type 'restrequest', 'graphql', or others like 'transfer' or 'groovy'.
+
+Here’s a sample input XML of a REST request that uses a GraphQL payload:
+
+<con:testStep type="restrequest" name="GetUserGraphQL">
+    <con:config>
+        <con:restRequest>
+            <con:originalUri>https://api.example.com/graphql</con:originalUri>
+            <con:method>POST</con:method>
+            <con:request>
+                {
+                  "query": "query GetUser($id: ID!) { user(id: $id) { name email } }",
+                  "variables": { "id": "123" }
+                }
+            </con:request>
+            <con:parameters/>
+        </con:restRequest>
+        <con:headers>
+            <con:entry key="Content-Type" value="application/json"/>
+        </con:headers>
+    </con:config>
+</con:testStep>
 
 TASK:
-1. In the block where 'restrequest' steps are being converted:
-   - Add logic to detect if the body contains a GraphQL-style payload:
-     - JSON body should include a top-level 'query' key.
-   - If detected:
-     - Format the Postman request with:
-       - method = 'POST'
-       - Content-Type: application/json
-       - body = JSON object with 'query' and optional 'variables'
-     - Use same endpoint as in restrequest
-     - Still allow property transfer scripts or headers to be included.
-2. Do not create a separate elif step_type == "graphql" block.
-3. Instead, detect GraphQL requests inside the existing restrequest logic and handle them inline.
+1. Inside the block that handles 'restrequest' test steps:
+   - Detect if the body content is a GraphQL request.
+     - It should be a JSON string with a top-level 'query' key.
+2. If it's GraphQL:
+   - Format the Postman request like this:
+     - method: POST
+     - url: same as <originalUri>
+     - headers: include 'Content-Type: application/json'
+     - body: use the entire JSON string with 'query' and 'variables'
+3. Do NOT create a new condition like 'if step_type == "graphql"'
+4. Instead, detect GraphQL from the 'restrequest' body content inside the same conditional block.
 
-You may assume:
-- Headers and parameters are already extracted.
-- Variable placeholders are converted using convert_readyapi_vars_to_postman().
-- request_body is available as a string.
-- Use json.loads() to detect if it's a GraphQL request.
+You can use:
+- json.loads() to check if body is JSON and contains 'query'
+- convert_readyapi_vars_to_postman() to sanitize variables
 
-Output: Updated Postman request JSON block.
+Output: Postman-compliant request item dictionary that includes appropriate GraphQL handling.
 """
