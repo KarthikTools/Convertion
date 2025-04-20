@@ -1,169 +1,27 @@
-**Postman API Testing Guide: Setting Up Authentication at Collection Level**
+"""
+You are enhancing a Python script that converts ReadyAPI test steps to Postman v2.1 format.
 
-This guide is intended for new QA engineers, testers, and developers who are getting started with API testing in Postman. It explains how to configure different authentication methods—OAuth2.0, Basic Auth, and Bearer Token—at the collection level, making your testing workflow secure and reusable.
+The input is an XML project file from ReadyAPI. Each test step can be of type 'restrequest', 'graphql', or others like 'transfer' and 'groovy'.
 
----
+TASK:
+1. In the block where 'restrequest' steps are being converted:
+   - Add logic to detect if the body contains a GraphQL-style payload:
+     - JSON body should include a top-level 'query' key.
+   - If detected:
+     - Format the Postman request with:
+       - method = 'POST'
+       - Content-Type: application/json
+       - body = JSON object with 'query' and optional 'variables'
+     - Use same endpoint as in restrequest
+     - Still allow property transfer scripts or headers to be included.
+2. Do not create a separate elif step_type == "graphql" block.
+3. Instead, detect GraphQL requests inside the existing restrequest logic and handle them inline.
 
-### ✅ Overview
-Most APIs require authentication to access protected endpoints. Postman allows you to handle authentication automatically at the **collection level**, so you don't have to set it up individually in every request.
+You may assume:
+- Headers and parameters are already extracted.
+- Variable placeholders are converted using convert_readyapi_vars_to_postman().
+- request_body is available as a string.
+- Use json.loads() to detect if it's a GraphQL request.
 
-This guide covers how to set up the following authentication types:
-- OAuth 2.0 (Client Credentials Flow)
-- Basic Authentication
-- Static Bearer Token
-
-With the setup in this guide:
-- Tokens or credentials are centralized and secure
-- Auth headers are added automatically to all requests
-- You can run individual or full collections without manual changes
-
----
-
-### ✅ Step-by-Step Instructions
-
-#### ① Create a New Collection
-1. Open Postman.
-2. Click **Collections** in the left sidebar.
-3. Click **New Collection** and give it a name (e.g., `My API Tests`).
-4. Click **Edit** to configure settings.
-
----
-
-#### ② Configure Authorization
-1. Inside the **Edit Collection** dialog, go to the **Authorization** tab.
-2. Set:
-   - **Type:** `Bearer Token`
-   - **Token:** `{{bearerToken}}`
-3. Click **Save**.
-
-> 🔎 Even for Basic Auth or OAuth2.0, we use `Bearer Token` here because the actual token or header will be dynamically set using a script.
-
----
-
-#### ③ Set Collection Variables
-Go to the **Collection → Variables** tab and add the following:
-
-| Variable Name     | Purpose                                    | Example Value                                |
-|-------------------|---------------------------------------------|----------------------------------------------|
-| `authType`        | Type of auth: `oauth2`, `basic`, `bearer`   | `oauth2`                                     |
-| `tokenUrl`        | OAuth2 token endpoint                       | `https://auth.example.com/oauth/token`       |
-| `clientId`        | OAuth2 client ID                            | `abc123`                                     |
-| `clientSecret`    | OAuth2 client secret                        | `secretXYZ`                                  |
-| `scope`           | (Optional) OAuth2 scope                     | `read write`                                 |
-| `basicUser`       | Username for Basic Auth                    | `admin`                                      |
-| `basicPass`       | Password for Basic Auth                    | `password123`                                |
-| `staticBearerToken`| Token value for static Bearer Token        | `eyJhbGciOiJIUzI1NiIsIn...`                  |
-| `bearerToken`     | Auto-populated token used in all requests   | *(Leave blank)*                              |
-| `tokenExpiry`     | Auto-populated expiry timestamp (epoch)     | *(Leave blank)*                              |
-
----
-
-#### ④ Add Pre-request Script at Collection Level
-Go to the **Pre-request Script** tab of the collection and paste the following logic:
-
-```javascript
-const authType = pm.collectionVariables.get("authType") || "oauth2";
-
-if (authType === "bearer") {
-    const token = pm.collectionVariables.get("staticBearerToken");
-    pm.request.headers.upsert({ key: "Authorization", value: `Bearer ${token}` });
-    console.log("Using static bearer token.");
-
-} else if (authType === "basic") {
-    const user = pm.collectionVariables.get("basicUser");
-    const pass = pm.collectionVariables.get("basicPass");
-    const encoded = btoa(`${user}:${pass}`);
-    pm.request.headers.upsert({ key: "Authorization", value: `Basic ${encoded}` });
-    console.log("Using Basic Auth header.");
-
-} else if (authType === "oauth2") {
-    const tokenUrl = pm.collectionVariables.get("tokenUrl");
-    const clientId = pm.collectionVariables.get("clientId");
-    const clientSecret = pm.collectionVariables.get("clientSecret");
-    const scope = pm.collectionVariables.get("scope") || "";
-
-    const expiry = parseInt(pm.collectionVariables.get("tokenExpiry"), 10);
-    const now = Math.floor(Date.now() / 1000);
-    const needsRefresh = !pm.collectionVariables.get("bearerToken") || isNaN(expiry) || now >= expiry;
-
-    if (needsRefresh) {
-        pm.sendRequest({
-            url: tokenUrl,
-            method: 'POST',
-            header: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: {
-                mode: 'urlencoded',
-                urlencoded: [
-                    { key: 'grant_type', value: 'client_credentials' },
-                    { key: 'client_id', value: clientId },
-                    { key: 'client_secret', value: clientSecret },
-                    { key: 'scope', value: scope }
-                ]
-            }
-        }, function (err, res) {
-            if (!err && res.code === 200) {
-                const token = res.json().access_token;
-                const expiresIn = res.json().expires_in || 3600;
-                pm.collectionVariables.set("bearerToken", token);
-                pm.collectionVariables.set("tokenExpiry", now + expiresIn - 60);
-                pm.request.headers.upsert({ key: "Authorization", value: `Bearer ${token}` });
-                console.log("Fetched and applied new OAuth2 token.");
-            } else {
-                console.error("Failed to fetch OAuth2 token", err || res.text());
-            }
-        });
-    } else {
-        const token = pm.collectionVariables.get("bearerToken");
-        pm.request.headers.upsert({ key: "Authorization", value: `Bearer ${token}` });
-        console.log("Reusing valid OAuth2 token.");
-    }
-}
-```
-
-Click **Save**.
-
----
-
-#### ⑤ Add Your API Requests
-1. Create your API requests (e.g., `GET /users`, `POST /items`) under the same collection.
-2. Each request should:
-   - Inherit authorization from the collection (default)
-   - No additional auth code or headers required
-
----
-
-### ✅ Testing It
-1. Open **Postman Console**: `View > Show Postman Console`
-2. Run any one request from the collection.
-3. You should see logs like:
-   - `Fetched and applied new OAuth2 token.`
-   - `Reusing valid OAuth2 token.`
-   - `Using Basic Auth header.`
-   - `Using static bearer token.`
-
-This confirms the correct flow is working based on your `authType` setting.
-
----
-
-### ✅ FAQ
-**Q: Can I run just one API instead of the whole collection?**  
-Yes! The collection-level pre-request script runs even for a single request as long as it belongs to the collection.
-
-**Q: Why did my request pass even after removing a variable?**  
-Because tokens or credentials from previous runs are still cached in collection variables. Clear `bearerToken` or `tokenExpiry` to force a re-auth.
-
-**Q: How do I change auth type for different environments?**  
-You can set the `authType` (and related variables) in your environment and reuse this logic across all environments.
-
----
-
-### ✅ Summary
-| Feature                     | What It Enables                              |
-|-----------------------------|----------------------------------------------|
-| Centralized Auth Control    | Auth logic in one place                      |
-| Supports Multiple Methods   | OAuth2, Basic, and Static Bearer             |
-| Automatic Token Refresh     | OAuth2 tokens auto-fetched and refreshed     |
-| One-Click Test Runs         | Works for full collections or single calls   |
-
-Use this setup to save time, reduce errors, and onboard your teammates faster into a secure, maintainable API testing workflow.
-
+Output: Updated Postman request JSON block.
+"""
