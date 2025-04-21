@@ -1,45 +1,40 @@
-"""
-You are enhancing a Python script that converts ReadyAPI test steps to Postman v2.1 format.
+def extract_datasink_script(config):
+    """
+    Convert ReadyAPI DataSink into Postman test script lines.
+    It captures values from previous responses and stores them in variables.
+    """
+    script_lines = []
+    properties = config.findall('.//con:property', ns)
+    for prop in properties:
+        name = prop.findtext('con:name', namespaces=ns)
+        raw_expr = prop.findtext('con:value', namespaces=ns)
 
-The input is an XML file from ReadyAPI. Each test step can be of type 'restrequest', 'graphql', or others like 'transfer' or 'groovy'.
+        if not name or not raw_expr:
+            continue
 
-Here’s a sample input XML of a REST request that uses a GraphQL payload:
+        # Normalize and extract variable name expression
+        expr = convert_readyapi_vars_to_postman(raw_expr)
 
-<con:testStep type="restrequest" name="GetUserGraphQL">
-    <con:config>
-        <con:restRequest>
-            <con:originalUri>https://api.example.com/graphql</con:originalUri>
-            <con:method>POST</con:method>
-            <con:request>
-                {
-                  "query": "query GetUser($id: ID!) { user(id: $id) { name email } }",
-                  "variables": { "id": "123" }
-                }
-            </con:request>
-            <con:parameters/>
-        </con:restRequest>
-        <con:headers>
-            <con:entry key="Content-Type" value="application/json"/>
-        </con:headers>
-    </con:config>
-</con:testStep>
+        if '["' in expr or "." in expr:
+            # Assume it's a JSON expression and use pm.response.json()
+            script_lines.append(f"pm.collectionVariables.set('{name}', _.get(pm.response.json(), '{expr}'));")
+        elif '//' in expr:
+            # Assume it's XPath (not directly supported, warn)
+            script_lines.append(f"// TODO: Convert XPath expression for {name} manually: {expr}")
+        else:
+            script_lines.append(f"pm.collectionVariables.set('{name}', {expr});")
+    return script_lines
 
-TASK:
-1. Inside the block that handles 'restrequest' test steps:
-   - Detect if the body content is a GraphQL request.
-     - It should be a JSON string with a top-level 'query' key.
-2. If it's GraphQL:
-   - Format the Postman request like this:
-     - method: POST
-     - url: same as <originalUri>
-     - headers: include 'Content-Type: application/json'
-     - body: use the entire JSON string with 'query' and 'variables'
-3. Do NOT create a new condition like 'if step_type == "graphql"'
-4. Instead, detect GraphQL from the 'restrequest' body content inside the same conditional block.
 
-You can use:
-- json.loads() to check if body is JSON and contains 'query'
-- convert_readyapi_vars_to_postman() to sanitize variables
-
-Output: Postman-compliant request item dictionary that includes appropriate GraphQL handling.
-"""
+elif step_type == "datasink":
+                    config = test_step.find('con:config', ns)
+                    sink_script = extract_datasink_script(config)
+                    if last_rest_step and sink_script:
+                        last_rest_step.setdefault("event", [])
+                        last_rest_step["event"].append({
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": sink_script
+                            }
+                        })
