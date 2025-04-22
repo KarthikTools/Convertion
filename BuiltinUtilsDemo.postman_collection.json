@@ -1,0 +1,192 @@
+{
+  "info": {
+    "name": "Postman Built-in Utilities Demo",
+    "_postman_id": "demo-collection-id",
+    "description": "Demo collection showcasing built-in utilities like lodash, xml2js, CryptoJS, moment, tv4, chai, and Buffer in Postman.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1 - Lodash cloneDeep",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "let input = { user: { name: \"John\", address: { city: \"Toronto\" } } };",
+              "let copy = _.cloneDeep(input);",
+              "copy.user.name = \"Bob\";",
+              "console.log(\"Original:\", input);",
+              "console.log(\"Cloned:\", copy);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://postman-echo.com/get",
+          "host": [
+            "https://postman-echo.com"
+          ],
+          "path": [
+            "get"
+          ]
+        }
+      }
+    },
+    {
+      "name": "2 - XML to JSON with xml2js",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const xmlData = '<response><status>ok</status></response>';",
+              "xml2js.parseString(xmlData, { explicitArray: false }, function(err, result) {",
+              "   if (err) console.error(err);",
+              "   else console.log(\"Parsed XML:\", result);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://postman-echo.com/get",
+          "host": [
+            "https://postman-echo.com"
+          ],
+          "path": [
+            "get"
+          ]
+        }
+      }
+    },
+    {
+      "name": "3 - CryptoJS Hash",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "let hash = CryptoJS.MD5(\"postman\").toString();",
+              "console.log(\"MD5 Hash:\", hash);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://postman-echo.com/get",
+          "host": [
+            "https://postman-echo.com"
+          ],
+          "path": [
+            "get"
+          ]
+        }
+      }
+    },
+    {
+      "name": "4 - Moment.js Date",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "let now = moment().format();",
+              "console.log(\"Current time:\", now);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://postman-echo.com/get",
+          "host": [
+            "https://postman-echo.com"
+          ],
+          "path": [
+            "get"
+          ]
+        }
+      }
+    },
+    {
+      "name": "5 - TV4 Schema Validation",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "let schema = {",
+              "  type: \"object\",",
+              "  properties: { name: { type: \"string\" } },",
+              "  required: [\"name\"]",
+              "};",
+              "let data = { name: \"Postman\" };",
+              "let result = tv4.validateResult(data, schema);",
+              "console.log(\"Is Valid:\", result.valid);",
+              "if (!result.valid) console.log(\"Error:\", result.error);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://postman-echo.com/get",
+          "host": [
+            "https://postman-echo.com"
+          ],
+          "path": [
+            "get"
+          ]
+        }
+      }
+    },
+    {
+      "name": "6 - Buffer Base64 Encoding",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "let str = \"Hello World\";",
+              "let encoded = Buffer.from(str).toString('base64');",
+              "console.log(\"Base64 Encoded:\", encoded);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://postman-echo.com/get",
+          "host": [
+            "https://postman-echo.com"
+          ],
+          "path": [
+            "get"
+          ]
+        }
+      }
+    }
+  ]
+}
