@@ -1,0 +1,238 @@
+{
+  "info": {
+    "name": "Multi-API CSV DataSource Loop",
+    "_postman_id": "csv-loop-multi-api",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "This collection demonstrates looping over different CSVs for multiple APIs (API1, API2, API3)"
+  },
+  "item": [
+    {
+      "name": "API1 - Loop Controller",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let currentIndex = parseInt(pm.environment.get('API1_index') || '0');",
+              "let data = JSON.parse(pm.environment.get('API1_data') || '[]');",
+              "if (currentIndex < data.length) {",
+              "  let currentItem = data[currentIndex];",
+              "  pm.environment.set('API1_current', JSON.stringify(currentItem));",
+              "  pm.environment.set('API1_index', currentIndex + 1);",
+              "  postman.setNextRequest('API1 - Request');",
+              "} else {",
+              "  postman.setNextRequest(null);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://postman-echo.com/get",
+          "host": [
+            "postman-echo",
+            "com"
+          ],
+          "path": [
+            "get"
+          ]
+        }
+      }
+    },
+    {
+      "name": "API1 - Request",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let input = JSON.parse(pm.environment.get('API1_current') || '{}');",
+              "pm.environment.set('finalPayload', JSON.stringify(input));",
+              "console.log('Payload for request:', input);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{{finalPayload}}"
+        },
+        "url": {
+          "raw": "https://postman-echo.com/post",
+          "host": [
+            "postman-echo",
+            "com"
+          ],
+          "path": [
+            "post"
+          ]
+        }
+      }
+    },
+    {
+      "name": "API2 - Loop Controller",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let currentIndex = parseInt(pm.environment.get('API2_index') || '0');",
+              "let data = JSON.parse(pm.environment.get('API2_data') || '[]');",
+              "if (currentIndex < data.length) {",
+              "  let currentItem = data[currentIndex];",
+              "  pm.environment.set('API2_current', JSON.stringify(currentItem));",
+              "  pm.environment.set('API2_index', currentIndex + 1);",
+              "  postman.setNextRequest('API2 - Request');",
+              "} else {",
+              "  postman.setNextRequest(null);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://postman-echo.com/get",
+          "host": [
+            "postman-echo",
+            "com"
+          ],
+          "path": [
+            "get"
+          ]
+        }
+      }
+    },
+    {
+      "name": "API2 - Request",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let input = JSON.parse(pm.environment.get('API2_current') || '{}');",
+              "pm.environment.set('finalPayload', JSON.stringify(input));",
+              "console.log('Payload for request:', input);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{{finalPayload}}"
+        },
+        "url": {
+          "raw": "https://postman-echo.com/post",
+          "host": [
+            "postman-echo",
+            "com"
+          ],
+          "path": [
+            "post"
+          ]
+        }
+      }
+    },
+    {
+      "name": "API3 - Loop Controller",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let currentIndex = parseInt(pm.environment.get('API3_index') || '0');",
+              "let data = JSON.parse(pm.environment.get('API3_data') || '[]');",
+              "if (currentIndex < data.length) {",
+              "  let currentItem = data[currentIndex];",
+              "  pm.environment.set('API3_current', JSON.stringify(currentItem));",
+              "  pm.environment.set('API3_index', currentIndex + 1);",
+              "  postman.setNextRequest('API3 - Request');",
+              "} else {",
+              "  postman.setNextRequest(null);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://postman-echo.com/get",
+          "host": [
+            "postman-echo",
+            "com"
+          ],
+          "path": [
+            "get"
+          ]
+        }
+      }
+    },
+    {
+      "name": "API3 - Request",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let input = JSON.parse(pm.environment.get('API3_current') || '{}');",
+              "pm.environment.set('finalPayload', JSON.stringify(input));",
+              "console.log('Payload for request:', input);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{{finalPayload}}"
+        },
+        "url": {
+          "raw": "https://postman-echo.com/post",
+          "host": [
+            "postman-echo",
+            "com"
+          ],
+          "path": [
+            "post"
+          ]
+        }
+      }
+    }
+  ]
+}
