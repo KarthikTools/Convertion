@@ -113,3 +113,64 @@ console.log(`Executing row ${pm.info.iteration + 1}`);
 ---
 
 Would you like this embedded in a downloadable `.postman_collection.json` sample and `.csv` file?
+
+
+Got it — you want to execute **any 6 rows dynamically from a CSV** (not just the first 6), **without editing the CSV** each time. Here's a robust solution using **Postman + CSV + a control flag column**, which you can reuse and automate easily.
+
+---
+
+### ✅ **Recommended Setup: Use a Control Column in CSV**
+
+#### 🔹 Step 1: Add a column in your CSV, e.g., `executeFlag`
+
+```csv
+name,email,age,executeFlag
+Alice,alice@example.com,28,yes
+Bob,bob@example.com,34,no
+Cathy,cathy@example.com,22,yes
+David,david@example.com,45,no
+Eve,eve@example.com,29,yes
+Frank,frank@example.com,36,yes
+Grace,grace@example.com,41,no
+Hank,hank@example.com,39,yes
+Ian,ian@example.com,27,no
+Jane,jane@example.com,32,yes
+```
+
+You can mark the rows you want to execute with `yes`.
+
+---
+
+#### 🔹 Step 2: Add This Logic to the Pre-request Script of Your Request
+
+```javascript
+let flag = pm.iterationData.get("executeFlag");
+if (flag !== "yes") {
+    console.log(`Skipping row ${pm.info.iteration + 1} — executeFlag is '${flag}'`);
+    postman.setNextRequest(null); // Skip this row
+}
+```
+
+- This checks if the row should be executed.
+- If `executeFlag != yes`, it skips the request for that row.
+
+---
+
+### 🧪 BONUS: Chain the Next Request Even If Skipping
+
+If you want to **skip only specific requests but continue the run**, you can do:
+
+```javascript
+if (pm.iterationData.get("executeFlag") !== "yes") {
+    postman.setNextRequest("RequestNameYouWantToGoNext");
+}
+```
+
+---
+
+### ⚡ Benefits:
+- No need to clean or copy rows each time.
+- Just update the `executeFlag` in the CSV.
+- Works seamlessly with Postman Collection Runner or Newman.
+
+Would you like a downloadable template for this with a Postman collection and sample CSV?
