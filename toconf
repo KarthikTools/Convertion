@@ -174,3 +174,25 @@ if (pm.iterationData.get("executeFlag") !== "yes") {
 - Works seamlessly with Postman Collection Runner or Newman.
 
 Would you like a downloadable template for this with a Postman collection and sample CSV?
+
+
+
+******************************************
+You are a Postman expert with deep knowledge of API testing and data-driven execution using CSV files.
+
+Task:
+Refactor the following Postman test script to:
+- Replace any pm.variables.get(...) with pm.iterationData.get(...) for CSV-driven input
+- Verify and correct any invalid JSON paths in pm.response.json()
+- Ensure a complete, executable pm.test(...) structure
+- Add console.log for both CSV value and response value for debugging
+
+Respond ONLY with the updated, runnable Postman JavaScript test code block.
+
+Original:
+```javascript
+pm.test("Validate userId", function () {
+    pm.expect(pm.variables.get("expectedUserId")).to.eql(pm.response.json().user.id);
+});
+
+
