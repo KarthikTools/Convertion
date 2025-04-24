@@ -1,0 +1,91 @@
+{
+  "info": {
+    "name": "CSV Control Demo",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Controlled API Request",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// ----- Configurable Settings -----",
+              "const LIMIT_ITERATIONS = true;",
+              "const SKIP_BY_FLAG = true;",
+              "const MAX_ROWS = parseInt(pm.environment.get(\"iteration_limit\") || 6);",
+              "const NEXT_REQUEST_NAME = \"NextAPI\";",
+              "// ----------------------------------",
+              "",
+              "// ----- Execution Control Logic -----",
+              "if (LIMIT_ITERATIONS && pm.info.iteration >= MAX_ROWS) {",
+              "    console.log(`Stopping at row ${pm.info.iteration + 1} of ${MAX_ROWS}`);",
+              "    postman.setNextRequest(null);",
+              "    return;",
+              "}",
+              "",
+              "let flag = (pm.iterationData.get(\"executeFlag\") || \"\").toLowerCase();",
+              "if (SKIP_BY_FLAG && flag !== \"yes\") {",
+              "    console.log(`Skipping row ${pm.info.iteration + 1} \u2014 executeFlag: ${flag}`);",
+              "    if (NEXT_REQUEST_NAME) {",
+              "        postman.setNextRequest(NEXT_REQUEST_NAME);",
+              "    } else {",
+              "        postman.setNextRequest(null);",
+              "    }",
+              "    return;",
+              "}",
+              "",
+              "console.log(`Executing row ${pm.info.iteration + 1}`);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://postman-echo.com/get?name={{name}}&email={{email}}&age={{age}}",
+          "host": [
+            "https://postman-echo.com"
+          ],
+          "path": [
+            "get"
+          ],
+          "query": [
+            {
+              "key": "name",
+              "value": "{{name}}"
+            },
+            {
+              "key": "email",
+              "value": "{{email}}"
+            },
+            {
+              "key": "age",
+              "value": "{{age}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "NextAPI",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://postman-echo.com/status/204",
+          "host": [
+            "https://postman-echo.com"
+          ],
+          "path": [
+            "status",
+            "204"
+          ]
+        }
+      }
+    }
+  ]
+}
