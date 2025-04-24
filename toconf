@@ -1,0 +1,115 @@
+It looks like Newman isn’t available in this environment, so I can’t generate the HTML report directly here. However, you can **easily run this on your local machine** using the steps below.
+
+---
+
+### ✅ **How to Generate the HTML Report Yourself**
+
+#### 🔹 1. **Install Node.js & Newman + Reporter**
+Open a terminal and run:
+
+```bash
+npm install -g newman
+npm install -g newman-reporter-htmlextra
+```
+
+#### 🔹 2. **Download These Files**
+
+- 👉 [Collection JSON](sandbox:/mnt/data/postman_csv_control_demo.json)
+- 👉 [Sample CSV](sandbox:/mnt/data/sample_data.csv)
+
+Save them in a folder like `postman-report-demo`.
+
+#### 🔹 3. **Run This Command**
+
+```bash
+newman run postman_csv_control_demo.json \
+  -d sample_data.csv \
+  -r htmlextra \
+  --reporter-htmlextra-export report.html
+```
+
+#### 🔹 4. **Open the Report**
+
+- Double-click `report.html`
+- You’ll see **detailed request/response/test results per row** and **console logs** if used.
+
+---
+
+Let me know if you want a GitHub-ready script or automation shell to wrap this for your team’s pipeline!
+
+
+
+
+???????????????????????
+Absolutely — here's a **unified script** that you can plug into any Postman request (preferably the **first request of your folder/collection**) to **handle various CSV-driven scenarios**, including:
+
+1. ✅ Execute only **N rows**
+2. ✅ Execute **specific rows based on `executeFlag` column**
+3. ✅ Skip request but **continue with another request**
+
+---
+
+### 📦 **CSV Structure Example**:
+```csv
+name,email,age,executeFlag
+Alice,alice@example.com,28,yes
+Bob,bob@example.com,34,no
+Cathy,cathy@example.com,22,yes
+...
+```
+
+---
+
+### 🧠 **Environment Variable Required** (Optional)
+To dynamically set max rows from UI:
+- Create an **environment variable**: `iteration_limit = 6`
+
+---
+
+### 🧩 **Combined Pre-request Script** (Add to the 1st Request or any Request to be Controlled)
+
+```javascript
+// ----- Configurable Settings -----
+const LIMIT_ITERATIONS = true;  // Set to false if not using row limit
+const SKIP_BY_FLAG = true;      // Set to false if you don't use "executeFlag" in CSV
+const MAX_ROWS = parseInt(pm.environment.get("iteration_limit") || 6);  // fallback default = 6
+const NEXT_REQUEST_NAME = "NextAPI";  // Name of the request to go if skipping (optional)
+// ----------------------------------
+
+// ----- Execution Control Logic -----
+
+// 1. Check row count limit
+if (LIMIT_ITERATIONS && pm.info.iteration >= MAX_ROWS) {
+    console.log(`Stopping at row ${pm.info.iteration + 1} of ${MAX_ROWS}`);
+    postman.setNextRequest(null); // Stop execution
+    return;
+}
+
+// 2. Check executeFlag column
+let flag = (pm.iterationData.get("executeFlag") || "").toLowerCase();
+if (SKIP_BY_FLAG && flag !== "yes") {
+    console.log(`Skipping row ${pm.info.iteration + 1} — executeFlag: ${flag}`);
+    
+    // Optionally jump to another request instead of stopping
+    if (NEXT_REQUEST_NAME) {
+        postman.setNextRequest(NEXT_REQUEST_NAME);
+    } else {
+        postman.setNextRequest(null);  // Skip if no alternate specified
+    }
+    return;
+}
+
+// 3. Proceed with current request (no condition matched)
+console.log(`Executing row ${pm.info.iteration + 1}`);
+```
+
+---
+
+### 💡 Tips:
+- You can disable `LIMIT_ITERATIONS` or `SKIP_BY_FLAG` individually.
+- Change `NEXT_REQUEST_NAME` to the name of the request you want to skip to.
+- Works both in **Collection Runner** and **Newman**.
+
+---
+
+Would you like this embedded in a downloadable `.postman_collection.json` sample and `.csv` file?
