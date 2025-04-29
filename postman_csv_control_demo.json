@@ -1,237 +1,37 @@
-Perfect — I understand.  
-You want a **professional**, **human-authored-looking** Confluence page, covering:
-
-- **All major and advanced ways** of using CSV and JSON in Postman  
-- **Control flags** (e.g., skip iteration, dynamic payload switch, conditional input)  
-- **Realistic examples** (not obvious "GPT" style)  
-- **Structured with smart sections + short tables** for easy reading  
-
-I'll build it **natural and technical**, like a seasoned QA Lead would document for an internal Confluence.  
-Here’s the full enhanced version for you: 
-
----
-
-# 📄 Data Handling in Postman: Working with CSV and JSON Files
-
-This page documents best practices and advanced techniques for handling external data sources (CSV and JSON) in Postman collections and workflows.
-
----
-
-## 1. Introduction
-
-In data-driven testing, it's common to externalize input data to improve test coverage, simplify maintenance, and enable dynamic payload generation. Postman natively supports **CSV** and **JSON** formats for this purpose.
-
-Choosing the right format depends on the complexity of your data model:
-
-| Scenario                        | CSV          | JSON         |
-|----------------------------------|--------------|--------------|
-| Simple, flat key-value pairs     | ✅ Suitable   | ✅ Suitable   |
-| Nested objects or arrays         | ❌ Limited    | ✅ Recommended|
-| Conditional logic based on fields| 🚫 Manual    | ✅ Flexible   |
-| Large datasets (>5000 records)   | ⚠️ Caution   | ⚠️ Caution   |
-
----
-
-## 2. Uploading External Files into Runner
-
-1. Click the **Runner** tab.
-2. Select your collection or folder.
-3. Choose your CSV or JSON file in the **Data** section.
-4. Configure **iterations** and **delay** if needed.
-5. Hit **Run**.
-
-✅ **Tip**: You can also trigger runs programmatically using Newman CLI with `--iteration-data`.
-
-Example:
-
-```bash
-newman run collection.json --iteration-data data.csv
-```
-
----
-
-## 3. Accessing Data Values inside Scripts
-
-Once a data file is loaded, data can be accessed using `pm.iterationData` methods:
-
-```javascript
-let username = pm.iterationData.get("username");
-let password = pm.iterationData.get("password");
-console.log("Testing login for user:", username);
-```
-
-**Important:**  
-- Field names must match the headers (CSV) or object keys (JSON).
-- Always validate presence to avoid undefined errors.
-
----
-
-## 4. Working with Nested JSON Data
-
-For more complex input, use `.toObject()` method to work with full objects:
-
-```javascript
-let data = pm.iterationData.toObject();
-
-// Accessing nested structure
-let city = data.user.address.city;
-let phoneNumber = data.user.contact.phone;
-console.log("City:", city);
-```
-
-✅ Good for APIs requiring deeply nested payloads like User Profile creation, Booking APIs, etc.
-
----
-
-## 5. Advanced Techniques: Control Flags and Conditional Logic
-
-You can enrich your test flow by using **control flags** inside your CSV/JSON to dynamically adjust the execution.
-
-| Control Flag    | Purpose                                   | Example Value |
-|-----------------|-------------------------------------------|---------------|
-| `run`           | Skip or execute test for a data row       | `Y` or `N`    |
-| `payloadType`   | Switch between multiple payload templates | `basic`, `extended` |
-| `assertionFlag` | Enable/disable certain validations        | `true` / `false` |
-
-### Example Usage:
-
-```javascript
-let data = pm.iterationData.toObject();
-
-// Skipping iteration if run is not 'Y'
-if (data.run !== 'Y') {
-    console.log("Skipping this iteration based on control flag.");
-    postman.setNextRequest(null);
-}
-
-// Switching payload dynamically
-if (data.payloadType === 'extended') {
-    pm.environment.set("requestTemplate", "extendedPayload");
-} else {
-    pm.environment.set("requestTemplate", "basicPayload");
-}
-```
-
-✅ Helps when running *same collection with different business rules*.
-
----
-
-## 6. Dynamic Request Body Generation
-
-**Dynamic request body** construction allows adapting the payload based on input:
-
-```javascript
-let data = pm.iterationData.toObject();
-
-// Building payload
-let requestBody = {
-    "userId": data.userId,
-    "email": data.email,
-    "address": {
-        "line1": data.addressLine1,
-        "city": data.city,
-        "country": data.country
-    }
-};
-
-// Updating request
-pm.request.body.update(JSON.stringify(requestBody));
-```
-
-✅ Ensures minimal hardcoding inside requests.
-
----
-
-## 7. Looping Over JSON Arrays in Test Scripts
-
-For **bulk processing** inside one request based on array fields:
-
-```javascript
-let data = pm.iterationData.toObject();
-
-if (Array.isArray(data.products)) {
-    data.products.forEach(product => {
-        console.log("Validating Product:", product.productId);
-    });
-}
-```
-
-📌 This is **not possible** if using CSV because CSV can’t hold arrays natively.
-
----
-
-## 8. Handling Missing or Optional Fields
-
-Add graceful handling for optional data fields:
-
-```javascript
-let country = pm.iterationData.get("country") || "Canada"; // Default value
-console.log("Country selected:", country);
-```
-
-✅ Avoids test failures due to missing optional fields.
-
----
-
-## 9. Cloning Data to Avoid Mutation
-
-When modifying input values within a test, avoid changing the original `pm.iterationData`. Use **Lodash cloneDeep**:
-
-```javascript
-let _ = require('lodash');
-
-let originalData = pm.iterationData.toObject();
-let clonedData = _.cloneDeep(originalData);
-
-// Safe to modify clonedData
-clonedData.email = "newemail@example.com";
-```
-
----
-
-## 10. Practical Examples at a Glance
-
-| Use Case                         | Snippet                                                         |
-|-----------------------------------|-----------------------------------------------------------------|
-| Get single value                  | `pm.iterationData.get("userId")`                                |
-| Full object access (nested JSON)  | `pm.iterationData.toObject()`                                   |
-| Conditional payload update        | `if (data.payloadType == 'extended') { updatePayload(); }`      |
-| Skip request based on flag        | `if (data.run !== 'Y') postman.setNextRequest(null);`            |
-| Default value if empty            | `let country = data.country || 'US';`                           |
-| Loop array from JSON input        | `data.products.forEach(p => console.log(p.name));`              |
-| Clone data for safe editing       | `let cloned = _.cloneDeep(pm.iterationData.toObject());`        |
-
----
-
-## 11. Tips and Common Mistakes to Avoid
-
-✅ Always validate your CSV/JSON structure before uploading.  
-✅ Avoid large files (>5MB) for smooth execution.  
-✅ Prefer JSON over CSV for nested data.  
-✅ Always check null/undefined fields when accessing dynamic data.  
-✅ Name your control flags clearly (`runFlag`, `envType`, `payloadSwitch`).
-
-❌ Don’t try to modify `pm.iterationData` directly — it's immutable.  
-❌ Don’t hardcode sensitive values inside CSV/JSON. Prefer environment variables.
-
----
-
-# 📋 Conclusion
-
-Postman’s data-driven capabilities allow for highly flexible and scalable test automation when combined with external CSV/JSON files. By thoughtfully using control flags, dynamic payloads, cloning, and validation techniques, teams can handle even the most complex scenarios efficiently.
-
----
-
-# ✅ Quick Action Points for Implementation
-
-- Use **CSV** for simple tests.
-- Use **JSON** for structured, nested tests.
-- Implement **control flags** to manage execution.
-- Leverage **lodash cloneDeep** to avoid side effects.
-- Validate your fields before access.
-
----
-
-Would you also like me to **generate a sample CSV file**, a **sample JSON file**, and a **Postman Collection Runner settings screenshot**? 📄🛠️  
-That way you can attach them along with this Confluence page! 🚀  
-Shall I?
+# Browser-use Summary
+
+**Overview:**
+Browser-use is a Python library that enables AI agents to control web browsers using natural language instructions, with 58.4k GitHub stars indicating significant popularity.
+
+**Core functionality:**
+- Connects LLMs (like GPT-4) to browser automation via Playwright
+- Uses AI to interpret DOM, make decisions, and execute browser actions
+- Maintains memory between steps for complex workflows
+- Supports various LLM providers (OpenAI, Anthropic, Azure, etc.)
+
+**Technical workflow:**
+1. User provides a task description
+2. LLM creates a plan and analyzes DOM state
+3. AI decides actions based on webpage content
+4. Actions are executed via Playwright
+5. Process repeats with feedback loop
+
+**Limitations:**
+- Python version constraints (works only with 3.11-3.12 for full functionality)
+- High token consumption and associated costs
+- Performance dependent on LLM quality
+- Challenges with special UI elements
+- Less deterministic than traditional automation
+
+**Memory functionality:**
+- Helps agent maintain context across multi-step workflows
+- Requires Python <3.13 due to PyTorch compatibility
+- Significantly improves performance for complex tasks
+
+**Comparison to Selenium:**
+- More adaptive to UI changes but less deterministic
+- Uses natural language instead of explicit programming
+- Better for complex workflows requiring reasoning
+- Potentially higher operational costs
+
+Browser-use represents a shift from explicit programming to instruction-based automation, trading some reliability for flexibility and ease of use.
