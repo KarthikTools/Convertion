@@ -35,3 +35,96 @@ Browser-use is a Python library that enables AI agents to control web browsers u
 - Potentially higher operational costs
 
 Browser-use represents a shift from explicit programming to instruction-based automation, trading some reliability for flexibility and ease of use.
+
+
+# Detailed Analysis of browser-use Issues
+
+## Browser Interaction Failures
+
+1. **Scrolling fails when scrollable element isn't root (#1481)**
+   - The agent can only scroll the main page body, not nested scrollable elements
+   - This limits functionality on complex UIs with independent scrollable sections
+   - Indicates a limitation in DOM traversal and element identification
+
+2. **Disabled elements being treated as interactive (#1469)**
+   - Agent attempts to interact with non-functional disabled elements
+   - Shows limitations in DOM state understanding
+   - Could lead to wasted actions and failed workflows
+
+3. **Text input not working on specific sites (Flipkart search box, #1434)**
+   - Site-specific compatibility issues suggest inconsistent handling of input fields
+   - Possibly related to shadow DOM or JavaScript-driven input fields
+   - Major limitation for e-commerce automation use cases
+
+4. **Blank page when running in command line mode (#1467)**
+   - Environment-specific rendering issues
+   - Points to potential headless browser configuration problems
+   - Affects automation in CI/CD pipelines and server environments
+
+## Reliability Issues
+
+1. **Inconsistent behavior for same step/task (#1464)**
+   - Non-deterministic execution is a critical flaw for automation tools
+   - Could be caused by race conditions or timing issues
+   - Makes the tool unpredictable for production use
+
+2. **Agent getting stuck at step 1 after packaging (#1503)**
+   - Environment-dependent execution suggests improper resource handling
+   - Distribution issues limit enterprise adoption possibilities
+   - May relate to how the agent accesses LLM APIs in packaged environments
+
+3. **Unable to take actions after page loads (#1476)**
+   - Core functionality failure that renders the tool unusable
+   - Possibly related to event handling or page state detection
+   - Suggests timing issues between page load events and action execution
+
+4. **File tree treated as common element, preventing interactions (#1433)**
+   - Complex nested UIs confuse the agent's element selection logic
+   - Shows limitations in UI component understanding
+   - Critical for applications with tree views, file explorers, etc.
+
+## Error Handling
+
+1. **"Locator.count: _progress is not defined" error (#1475)**
+   - Internal Playwright-related error leaking to users
+   - Suggests improper error catching and handling
+   - Impacts user experience with cryptic error messages
+
+2. **Control characters printed when using arrow keys after forced exit (#1431)**
+   - Terminal state not properly reset after abnormal termination
+   - Points to resource cleanup issues
+   - Poor experience when debugging or manually interrupting tasks
+
+3. **Screenshot taking causing website search failures (#1463)**
+   - Feature interference where one capability breaks another
+   - May relate to timing or browser resource conflicts
+   - Shows integration issues between different parts of the system
+
+4. **Browser initialization failures (#1461)**
+   - Fundamental setup issues block all functionality
+   - Could relate to environment differences or browser compatibility issues
+   - Critical barrier to entry for new users
+
+## Feature Gaps
+
+1. **Lack of console log capture (#1501)**
+   - Missing debugging capability for web application issues
+   - Limits problem diagnosis capabilities
+   - Important for developers debugging complex interactions
+
+2. **Need for skip_failures in rerun_history (#1492)**
+   - Insufficient resilience features for handling partial failures
+   - Automation reliability enhancement request
+   - Shows need for more robust error recovery options
+
+3. **Inability to get list of DOM interactions (#1507)**
+   - Limited introspection and debugging capabilities
+   - Hinders understanding of agent decision-making
+   - Important for auditing and improving agent performance
+
+4. **Pydantic version needs updating (#1512)**
+   - Dependency management issues
+   - May block use with other modern libraries
+   - Technical debt that could impact future development
+
+These issues collectively suggest that browser-use is still in a relatively early stage of maturity, with significant challenges in reliability, cross-site compatibility, and error handling that would need to be addressed for enterprise or mission-critical use cases.
