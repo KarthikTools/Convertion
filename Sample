@@ -1,0 +1,51 @@
+{
+  "info": {
+    "name": "Conditional RunFlag Collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Conditional API Request",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "if (pm.iterationData.get(\"runFlag\") === \"Y\") {",
+              "    pm.variables.set(\"shouldRun\", \"true\");",
+              "} else {",
+              "    pm.variables.set(\"shouldRun\", \"false\");",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.variables.get(\"shouldRun\") !== \"true\") {",
+              "    console.log(\"Skipping test block as runFlag is N\");",
+              "    return;",
+              "}",
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{#if (eq shouldRun \"true\")}}https://postman-echo.com/get?name={{name}}{{else}}https://postman-echo.com/delay/0{{/if}}",
+          "host": [
+            "{{#if (eq shouldRun \"true\")}}https://postman-echo.com/get?name={{name}}{{else}}https://postman-echo.com/delay/0{{/if}}"
+          ]
+        }
+      }
+    }
+  ]
+}
