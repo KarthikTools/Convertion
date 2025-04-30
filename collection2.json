@@ -1,0 +1,681 @@
+{
+  "info": {
+    "name": "Enterprise E2E Testing Framework",
+    "description": "A comprehensive E2E testing framework that simulates advanced testing features",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "User Onboarding Flow",
+      "item": [
+        {
+          "name": "Step 1: Register User",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Check skipStep1 flag",
+                  "const skipStep1 = pm.iterationData.get('skipStep1');",
+                  "const expectedStatus = pm.iterationData.get('expectedStatus');",
+                  "",
+                  "if (skipStep1 === 'Y') {",
+                  "    console.log('Skipping Step 1 as skipStep1 flag is Y');",
+                  "    postman.setNextRequest('Step 2: Get User Details');",
+                  "    return;",
+                  "}",
+                  "",
+                  "// Store expected status for validation",
+                  "pm.variables.set('expectedStatus', expectedStatus);",
+                  "",
+                  "// Get data from the CSV iteration",
+                  "const name = pm.iterationData.get('name');",
+                  "const email = pm.iterationData.get('email');",
+                  "const password = pm.iterationData.get('password');",
+                  "const role = pm.iterationData.get('role');",
+                  "",
+                  "console.log(`Processing user registration for: ${name}, ${email}, role: ${role}`);",
+                  "",
+                  "// Set request data in variables for debugging or reuse",
+                  "pm.variables.set('reqName', name);",
+                  "pm.variables.set('reqEmail', email);",
+                  "pm.variables.set('reqPassword', password);",
+                  "pm.variables.set('reqRole', role);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Parse the response",
+                  "const response = pm.response.json();",
+                  "const expectedStatus = parseInt(pm.variables.get('expectedStatus'));",
+                  "",
+                  "pm.test(`Status code is ${expectedStatus}`, function () {",
+                  "    pm.response.to.have.status(expectedStatus);",
+                  "});",
+                  "",
+                  "// Check if user already exists (status code would be 200 instead of 201)",
+                  "const userAlreadyExists = pm.response.code === 200;",
+                  "",
+                  "if (userAlreadyExists) {",
+                  "    console.log(\"User already exists! Will use existing user ID\");",
+                  "    pm.test(\"Response indicates user already exists\", function() {",
+                  "        pm.expect(response.message).to.include(\"already exists\");",
+                  "    });",
+                  "    ",
+                  "    // Set userExists flag to modify flow execution",
+                  "    pm.collectionVariables.set('userExists', true);",
+                  "} else {",
+                  "    pm.collectionVariables.set('userExists', false);",
+                  "    ",
+                  "    pm.test(\"Response includes user ID\", function() {",
+                  "        pm.expect(response.userId).to.exist;",
+                  "    });",
+                  "}",
+                  "",
+                  "// Extract user ID from response for chaining",
+                  "if (response.userId) {",
+                  "    pm.collectionVariables.set('userId', response.userId);",
+                  "    console.log(`User ID extracted and saved: ${response.userId}`);",
+                  "}",
+                  "",
+                  "// Save timestamp for validation",
+                  "pm.collectionVariables.set('registrationTimestamp', new Date().toISOString());"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"name\": \"{{reqName}}\",\n    \"email\": \"{{reqEmail}}\",\n    \"password\": \"{{reqPassword}}\",\n    \"role\": \"{{reqRole}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "register"
+              ]
+            },
+            "description": "Register a new user with data from CSV"
+          }
+        },
+        {
+          "name": "Step 2: Get User Details",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "console.log(`Fetching user details for user ID: ${pm.collectionVariables.get('userId')}`);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const response = pm.response.json();",
+                  "",
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"User details match registration data\", function() {",
+                  "    pm.expect(response.name).to.eql(pm.variables.get('reqName'));",
+                  "    pm.expect(response.email).to.eql(pm.variables.get('reqEmail'));",
+                  "    pm.expect(response.role).to.eql(pm.variables.get('reqRole'));",
+                  "});",
+                  "",
+                  "// Extract additional details for chaining to next request",
+                  "if (response.profileStatus) {",
+                  "    pm.collectionVariables.set('profileStatus', response.profileStatus);",
+                  "}",
+                  "",
+                  "if (response.accountCreated) {",
+                  "    pm.collectionVariables.set('accountCreated', response.accountCreated);",
+                  "}",
+                  "",
+                  "console.log(`User details fetched successfully. Profile status: ${response.profileStatus}`);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/user/{{userId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "{{userId}}"
+              ]
+            },
+            "description": "Get user details using the ID from previous request"
+          }
+        },
+        {
+          "name": "Step 3: Validate User Profile",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Skip this request if user already exists",
+                  "if (pm.collectionVariables.get('userExists') === 'true') {",
+                  "    console.log('User already exists - skipping profile validation');",
+                  "    postman.setNextRequest('Login + Auth Flow');",
+                  "} else {",
+                  "    console.log('Proceeding with profile validation...');",
+                  "}",
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const response = pm.response.json();",
+                  "",
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Profile validation succeeded\", function() {",
+                  "    pm.expect(response.valid).to.be.true;",
+                  "    pm.expect(response.validationMessage).to.include('successful');",
+                  "});",
+                  "",
+                  "// Set variables based on validation response",
+                  "pm.collectionVariables.set('profileValidated', response.valid);",
+                  "pm.collectionVariables.set('validationTimestamp', new Date().toISOString());",
+                  "",
+                  "console.log(`Profile validation complete. Result: ${response.valid}`);",
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"userId\": \"{{userId}}\",\n    \"registrationTimestamp\": \"{{registrationTimestamp}}\",\n    \"profileStatus\": \"{{profileStatus}}\",\n    \"role\": \"{{reqRole}}\",\n    \"email\": \"{{reqEmail}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/validate-profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "validate-profile"
+              ]
+            },
+            "description": "Validate the user profile using data extracted from previous requests"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Login + Auth Flow",
+      "item": [
+        {
+          "name": "Step 1: Get Auth Token",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "console.log(`Attempting to get auth token for: ${pm.variables.get('reqEmail')}`);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const response = pm.response.json();",
+                  "",
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has token\", function() {",
+                  "    pm.expect(response.token).to.exist;",
+                  "    pm.expect(response.token).to.be.a('string');",
+                  "});",
+                  "",
+                  "// Save the token to environment variables",
+                  "if (response.token) {",
+                  "    pm.environment.set('bearerToken', response.token);",
+                  "    console.log('Bearer token saved to environment variables');",
+                  "}",
+                  "",
+                  "// Set expiry time if provided",
+                  "if (response.expiresIn) {",
+                  "    const expiryTime = new Date();",
+                  "    expiryTime.setSeconds(expiryTime.getSeconds() + response.expiresIn);",
+                  "    pm.environment.set('tokenExpiryTime', expiryTime.toISOString());",
+                  "    console.log(`Token will expire at: ${expiryTime.toISOString()}`);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"email\": \"{{reqEmail}}\",\n    \"password\": \"{{reqPassword}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/getToken",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "getToken"
+              ]
+            },
+            "description": "Authenticate and get bearer token"
+          }
+        },
+        {
+          "name": "Step 2: Test Authenticated Request",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Check if token is expired and handle accordingly",
+                  "const tokenExpiry = pm.environment.get('tokenExpiryTime');",
+                  "",
+                  "if (tokenExpiry) {",
+                  "    const expiryTime = new Date(tokenExpiry);",
+                  "    const currentTime = new Date();",
+                  "    ",
+                  "    if (currentTime > expiryTime) {",
+                  "        console.log('Token has expired! Should request a new token.');",
+                  "        // In a real scenario, you might want to trigger token refresh here",
+                  "    } else {",
+                  "        console.log('Token is still valid.');",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const response = pm.response.json();",
+                  "",
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Authenticated request successful\", function() {",
+                  "    pm.expect(response.authenticated).to.be.true;",
+                  "    pm.expect(response.userId).to.equal(pm.collectionVariables.get('userId'));",
+                  "});",
+                  "",
+                  "console.log(`Authentication verified for user: ${response.userId}`);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/authenticated-resource",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "authenticated-resource"
+              ]
+            },
+            "description": "Test an authenticated request with the bearer token"
+          }
+        }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Collection level pre-request script to attach auth token to all requests in this folder",
+              "const token = pm.environment.get('bearerToken');",
+              "",
+              "if (token) {",
+              "    console.log('Adding authorization header with bearer token');",
+              "    pm.request.headers.add({",
+              "        key: 'Authorization',",
+              "        value: `Bearer ${token}`",
+              "    });",
+              "} else {",
+              "    console.log('No bearer token found in environment variables');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "DB Validation",
+      "item": [
+        {
+          "name": "Step 1: DB Validation",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "console.log(`Performing DB validation for user ID: ${pm.collectionVariables.get('userId')}`);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const response = pm.response.json();",
+                  "",
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Database record exists and matches user data\", function() {",
+                  "    pm.expect(response.exists).to.be.true;",
+                  "    pm.expect(response.userData.email).to.equal(pm.variables.get('reqEmail'));",
+                  "    pm.expect(response.userData.name).to.equal(pm.variables.get('reqName'));",
+                  "    pm.expect(response.userData.role).to.equal(pm.variables.get('reqRole'));",
+                  "});",
+                  "",
+                  "// Verify database timestamps",
+                  "pm.test(\"Timestamps are correct in database\", function() {",
+                  "    const dbCreatedAt = new Date(response.userData.createdAt);",
+                  "    const registrationTime = new Date(pm.collectionVariables.get('registrationTimestamp'));",
+                  "    ",
+                  "    // Check if timestamps are within 5 minutes (allowing for processing time)",
+                  "    const timeDiff = Math.abs(dbCreatedAt - registrationTime) / 1000 / 60;",
+                  "    pm.expect(timeDiff).to.be.below(5);",
+                  "});",
+                  "",
+                  "console.log('DB validation complete');",
+                  "",
+                  "// Example of creating a custom report data structure",
+                  "const reportData = {",
+                  "    userId: pm.collectionVariables.get('userId'),",
+                  "    email: pm.variables.get('reqEmail'),",
+                  "    dbValidated: response.exists,",
+                  "    profileValidated: pm.collectionVariables.get('profileValidated') === 'true',",
+                  "    validationTimestamp: new Date().toISOString()",
+                  "};",
+                  "",
+                  "console.log('Report data for this test iteration:', JSON.stringify(reportData, null, 2));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/db-validate?id={{userId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "db-validate"
+              ],
+              "query": [
+                {
+                  "key": "id",
+                  "value": "{{userId}}"
+                }
+              ]
+            },
+            "description": "Simulate database validation via a bridge API"
+          }
+        },
+        {
+          "name": "Step 2: Perform DB Assertions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const response = pm.response.json();",
+                  "",
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Database assertions are valid\", function() {",
+                  "    pm.expect(response.assertionsPassed).to.be.true;",
+                  "    pm.expect(response.failedAssertions).to.be.empty;",
+                  "});",
+                  "",
+                  "// Log detailed assertion results",
+                  "console.log(`DB assertions summary: ${response.totalAssertions} run, ${response.passedAssertions} passed`);",
+                  "",
+                  "if (response.assertionDetails && response.assertionDetails.length > 0) {",
+                  "    console.log('Detailed assertion results:');",
+                  "    response.assertionDetails.forEach(assertion => {",
+                  "        console.log(`- ${assertion.name}: ${assertion.passed ? 'PASSED' : 'FAILED'} - ${assertion.message}`);",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Prepare the assertions we want to check against the database",
+                  "const assertions = [",
+                  "    {",
+                  "        \"field\": \"email\",",
+                  "        \"expectedValue\": pm.variables.get('reqEmail'),",
+                  "        \"operator\": \"equals\"",
+                  "    },",
+                  "    {",
+                  "        \"field\": \"role\",",
+                  "        \"expectedValue\": pm.variables.get('reqRole'),",
+                  "        \"operator\": \"equals\"",
+                  "    },",
+                  "    {",
+                  "        \"field\": \"isActive\",",
+                  "        \"expectedValue\": true,",
+                  "        \"operator\": \"equals\"",
+                  "    },",
+                  "    {",
+                  "        \"field\": \"lastLogin\",",
+                  "        \"operator\": \"exists\"",
+                  "    }",
+                  "];",
+                  "",
+                  "// Set these assertions as collection variables for the request",
+                  "pm.collectionVariables.set('dbAssertions', JSON.stringify(assertions));",
+                  "",
+                  "console.log(`Running ${assertions.length} database assertions for user ${pm.collectionVariables.get('userId')}`);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"userId\": \"{{userId}}\",\n    \"assertions\": {{dbAssertions}}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/db-assertions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "db-assertions"
+              ]
+            },
+            "description": "Run database assertions for more complex validation scenarios"
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "exec": [
+          "// Global pre-request script for the collection",
+          "const runFlag = pm.iterationData.get('runFlag');",
+          "const testName = pm.iterationData.get('name');",
+          "",
+          "// Check if this iteration should run based on runFlag",
+          "if (runFlag !== 'Y') {",
+          "    console.log(`Skipping test iteration for ${testName} as runFlag is ${runFlag}`);",
+          "    // Skip all requests in this iteration",
+          "    postman.setNextRequest(null);",
+          "    return;",
+          "}",
+          "",
+          "console.log('Running test iteration for: ' + testName);",
+          "",
+          "// Log iteration details for debugging",
+          "console.log(`Iteration data: ${JSON.stringify(pm.iterationData.toObject())}`);",
+          "",
+          "// Set up consistent timestamp format for this run",
+          "pm.collectionVariables.set('testStartTime', new Date().toISOString());",
+          "pm.collectionVariables.set('testRunId', Date.now().toString());",
+          "",
+          "// Log environment for debugging",
+          "console.log(`Base URL: ${pm.environment.get('baseUrl')}`);"
+        ],
+        "type": "text/javascript"
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "exec": [
+          "// Global test script for all requests",
+          "console.log(`Request completed: ${pm.info.requestName}`);",
+          "console.log(`Response time: ${pm.response.responseTime}ms`);",
+          "",
+          "// Log response headers for debugging if needed",
+          "// console.log('Response headers:', JSON.stringify(pm.response.headers));",
+          "",
+          "// Check for rate limiting",
+          "const rateLimitRemaining = pm.response.headers.get('X-RateLimit-Remaining');",
+          "",
+          "if (rateLimitRemaining !== undefined && parseInt(rateLimitRemaining) < 10) {",
+          "    console.warn(`Warning: Rate limit is getting low: ${rateLimitRemaining} requests remaining`);",
+          "}",
+          "",
+          "// Track test coverage",
+          "const testRunId = pm.collectionVariables.get('testRunId');",
+          "console.log(`Request completed as part of test run: ${testRunId}`);"
+        ],
+        "type": "text/javascript"
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "userExists",
+      "value": "false"
+    },
+    {
+      "key": "registrationTimestamp",
+      "value": ""
+    },
+    {
+      "key": "profileStatus",
+      "value": ""
+    },
+    {
+      "key": "accountCreated",
+      "value": ""
+    },
+    {
+      "key": "profileValidated",
+      "value": "false"
+    },
+    {
+      "key": "validationTimestamp",
+      "value": ""
+    },
+    {
+      "key": "dbAssertions",
+      "value": "[]"
+    },
+    {
+      "key": "testStartTime",
+      "value": ""
+    },
+    {
+      "key": "testRunId",
+      "value": ""
+    }
+  ]
+} 
