@@ -1,0 +1,18 @@
+I'm building a Java REST-assured client to call a SOAP service over HTTPS. The SOAP service requires a `.jks` certificate, which works in ReadyAPI, but fails in my Java code with a `bad_certificate` error.
+
+I want you to generate production-grade code that:
+1. Loads the `.jks` truststore (and optionally keystore if needed).
+2. Builds an `SSLContext` using this `.jks` file.
+3. Integrates this SSL context into RestAssured using Apache HTTP client.
+4. Sends a SOAP request with the correct headers (`text/xml`), body, and endpoint.
+
+Requirements:
+- Compatible with Java 11+.
+- Explain whether to use `loadTrustMaterial` or `loadKeyMaterial`.
+- Show me how to support mutual TLS if needed.
+- Include error-handling best practices.
+- Do **not** use `useRelaxedHTTPSValidation()` – I want secure validation.
+- Assume I have a SOAP envelope string.
+- Avoid deprecated classes (e.g., don’t use `DefaultHttpClient`).
+
+Please also give me tips to debug the `bad_certificate` error and how to verify that the certificate alias is correctly used.
